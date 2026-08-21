@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Board, Comment, Component, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemLink
+from .models import Board, Comment, Component, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
 from .serializers import (
     BoardSerializer,
     CommentSerializer,
@@ -24,7 +24,9 @@ from .serializers import (
     WorkItemLinkSerializer,
     WorkItemSerializer,
     WorkItemSummarySerializer,
+    WorkItemStatusSerializer,
     can_manage_components,
+    can_manage_statuses,
     can_manage_screen_assignments,
     user_can_manage_definitions,
 )
@@ -323,6 +325,108 @@ class ComponentViewSet(viewsets.ModelViewSet):
         if not can_manage_components(role):
             raise PermissionDenied("You don't have permission to manage components.")
         instance.delete()
+
+
+class WorkItemStatusViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete"]
+    serializer_class = WorkItemStatusSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    pagination_class = None
+
+    def get_project(self):
+        from projects.models import Project
+
+        return get_object_or_404(Project, pk=self.kwargs["project_pk"])
+
+    def get_queryset(self):
+        return WorkItemStatus.objects.filter(project_id=self.kwargs["project_pk"])
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.action in ("list", "create"):
+            self.check_object_permissions(request, self.get_project())
+
+    def perform_create(self, serializer):
+        project = self.get_project()
+        role = project.memberships.get(user=self.request.user).role
+        if not can_manage_statuses(role):
+            raise PermissionDenied("You don't have permission to manage this project's statuses.")
+        name = serializer.validated_data.get("name")
+        if WorkItemStatus.objects.filter(project=project, name__iexact=name).exists():
+            raise ValidationError({"name": f'"{name}" already exists.'})
+        position = WorkItemStatus.objects.filter(project=project).count()
+        serializer.save(project=project, position=position)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        role = instance.project.memberships.get(user=self.request.user).role
+        if not can_manage_statuses(role):
+            raise PermissionDenied("You don't have permission to manage this project's statuses.")
+
+        name = serializer.validated_data.get("name")
+        if name and WorkItemStatus.objects.filter(
+            project=instance.project, name__iexact=name
+        ).exclude(pk=instance.pk).exists():
+            raise ValidationError({"name": f'"{name}" already exists.'})
+
+        new_category = serializer.validated_data.get("category")
+        if new_category and new_category != instance.category:
+            remaining = WorkItemStatus.objects.filter(
+                project=instance.project, category=instance.category
+            ).exclude(pk=instance.pk)
+            if not remaining.exists():
+                raise ValidationError(
+                    {"category": f"{instance.get_category_display()} needs at least one status — recategorize another one first."}
+                )
+
+        serializer.save()
+        if "position" in self.request.data:
+            self._reposition(instance)
+
+    def _reposition(self, instance):
+        try:
+            target = max(0, int(self.request.data["position"]))
+        except (TypeError, ValueError):
+            raise ValidationError({"position": "Must be a whole number."})
+        siblings = list(
+            WorkItemStatus.objects.filter(project=instance.project)
+            .exclude(pk=instance.pk)
+            .order_by("position", "id")
+        )
+        target = min(target, len(siblings))
+        siblings.insert(target, instance)
+        for index, status in enumerate(siblings):
+            if status.position != index:
+                status.position = index
+                status.save(update_fields=["position"])
+
+    def perform_destroy(self, instance):
+        # No "still in use by a work item" guard yet — WorkItem.status is
+        # still a plain CharField at this point in the plan (Task 2 converts
+        # it to a ForeignKey to WorkItemStatus), so there is no relationship
+        # to query here at all. Task 2 replaces this method with the real
+        # guard once that FK — and the reverse accessor it creates — exists.
+        # This mirrors sub-project 2b's CustomField/Screen/FieldOption
+        # delete guards, each of which shipped unguarded in the task that
+        # introduced the model and gained its real guard in a later task
+        # once the model it needed to check against existed.
+        role = instance.project.memberships.get(user=self.request.user).role
+        if not can_manage_statuses(role):
+            raise PermissionDenied("You don't have permission to manage this project's statuses.")
+
+        remaining = WorkItemStatus.objects.filter(
+            project=instance.project, category=instance.category
+        ).exclude(pk=instance.pk)
+        if not remaining.exists():
+            raise ValidationError({"detail": f"{instance.get_category_display()} needs at least one status."})
+
+        project = instance.project
+        instance.delete()
+        siblings = list(WorkItemStatus.objects.filter(project=project).order_by("position", "id"))
+        for index, status in enumerate(siblings):
+            if status.position != index:
+                status.position = index
+                status.save(update_fields=["position"])
 
 
 class ProjectScreenAssignmentsView(APIView):

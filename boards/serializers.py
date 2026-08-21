@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from accounts.serializers import UserSerializer
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Screen, ScreenField, WorkItem, WorkItemLink
+from .models import Board, Comment, Component, CustomField, FieldOption, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
 from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error
 
 VALID_PARENT_TYPES = {
@@ -31,6 +31,10 @@ def hierarchy_error(item_type, parent):
 
 
 def can_manage_components(role):
+    return role in ("owner", "admin")
+
+
+def can_manage_statuses(role):
     return role in ("owner", "admin")
 
 
@@ -68,6 +72,19 @@ class ComponentSerializer(serializers.ModelSerializer):
         if not value.strip():
             raise serializers.ValidationError("This field may not be blank.")
         return value.strip()
+
+
+class WorkItemStatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WorkItemStatus
+        fields = ["id", "project", "name", "category", "position"]
+        read_only_fields = ["project", "position"]
+
+    def validate_name(self, value):
+        clean = value.strip()
+        if not clean:
+            raise serializers.ValidationError("This field may not be blank.")
+        return clean
 
 
 class FieldOptionSerializer(serializers.ModelSerializer):

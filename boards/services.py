@@ -5,7 +5,53 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from .models import CustomField, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue
+from .models import CustomField, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
+
+_DEFAULT_STATUSES = [("To Do", "todo", 0), ("In Progress", "in_progress", 1), ("Done", "done", 2)]
+
+
+def seed_default_statuses(project) -> dict:
+    """The 3 default statuses every project starts with. Idempotent: if the
+    project already has any statuses (from an earlier call, or because it
+    was seeded some other way), returns its existing todo/in_progress/done
+    rows instead of creating duplicates.
+
+    Reached two ways, deliberately: called explicitly from
+    ProjectViewSet.perform_create (so a project created through the real API
+    has 3 statuses immediately), and reached indirectly — via
+    resolve_default_status()'s own fallback, below — from WorkItem.save()
+    (so a project created directly via the ORM — every existing test
+    fixture, seed_demo, etc. — still works without being rewritten to seed
+    anything itself)."""
+    existing = {s.category: s for s in WorkItemStatus.objects.filter(project=project)}
+    if existing:
+        # Whatever exists, return a dict good enough for resolve_default_status
+        # to work with — a project that already has custom statuses is not
+        # re-seeded, only reported back.
+        return existing
+
+    created = [
+        WorkItemStatus(project=project, name=name, category=category, position=position)
+        for name, category, position in _DEFAULT_STATUSES
+    ]
+    WorkItemStatus.objects.bulk_create(created)
+    # Refetch to get IDs after bulk_create
+    created_objects = WorkItemStatus.objects.filter(project=project).order_by("position")
+    return {status.category: status for status in created_objects}
+
+
+def resolve_default_status(project):
+    """The status a new work item lands in when none is given — the
+    lowest-position todo-category status, i.e. the leftmost column.
+    Seeds the project's defaults first if it has none at all yet."""
+    status = (
+        WorkItemStatus.objects.filter(project=project, category=WorkItemStatus.Category.TODO)
+        .order_by("position", "id")
+        .first()
+    )
+    if status is not None:
+        return status
+    return seed_default_statuses(project)["todo"]
 
 
 def next_position(board_id: int, status: str) -> int:

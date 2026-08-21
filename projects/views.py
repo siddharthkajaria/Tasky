@@ -51,6 +51,9 @@ class ProjectViewSet(
         ProjectMembership.objects.create(
             project=project, user=self.request.user, role=ProjectMembership.Role.OWNER
         )
+        from boards.services import seed_default_statuses
+
+        seed_default_statuses(project)
 
     def perform_destroy(self, instance):
         membership = instance.memberships.get(user=self.request.user)

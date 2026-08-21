@@ -126,6 +126,27 @@ class Component(models.Model):
         return f"{self.name} ({self.project})"
 
 
+class WorkItemStatus(models.Model):
+    class Category(models.TextChoices):
+        TODO = "todo", "To Do"
+        IN_PROGRESS = "in_progress", "In Progress"
+        DONE = "done", "Done"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="statuses")
+    name = models.CharField(max_length=80)
+    category = models.CharField(max_length=20, choices=Category.choices)
+    position = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "name"], name="unique_status_name_per_project"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.project})"
+
+
 class CustomField(models.Model):
     class FieldType(models.TextChoices):
         TEXT_SHORT = "text_short", "Short text"

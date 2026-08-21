@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Board, Comment, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemFieldValue
+from .models import Board, Comment, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
 
 
 @admin.register(Board)
@@ -59,3 +59,10 @@ class ProjectScreenAssignmentAdmin(admin.ModelAdmin):
 class WorkItemFieldValueAdmin(admin.ModelAdmin):
     list_display = ["work_item", "field", "value"]
     list_filter = ["field"]
+
+
+@admin.register(WorkItemStatus)
+class WorkItemStatusAdmin(admin.ModelAdmin):
+    list_display = ["name", "category", "project", "position"]
+    list_filter = ["category"]
+    search_fields = ["name"]

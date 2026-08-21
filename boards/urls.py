@@ -11,6 +11,7 @@ from .views import (
     ScreenFieldViewSet,
     ScreenViewSet,
     WorkItemLinkViewSet,
+    WorkItemStatusViewSet,
     WorkItemViewSet,
 )
 
@@ -32,6 +33,16 @@ urlpatterns = router.urls + [
         "projects/<int:project_pk>/components/<int:pk>/",
         ComponentViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
         name="project-component-detail",
+    ),
+    path(
+        "projects/<int:project_pk>/statuses/",
+        WorkItemStatusViewSet.as_view({"get": "list", "post": "create"}),
+        name="project-statuses",
+    ),
+    path(
+        "projects/<int:project_pk>/statuses/<int:pk>/",
+        WorkItemStatusViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
+        name="project-status-detail",
     ),
     path(
         "fields/<int:field_pk>/options/",
