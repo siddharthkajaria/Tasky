@@ -3,11 +3,17 @@ import datetime
 import pytest
 
 from boards.models import Board, WorkItem
+from boards.services import seed_default_statuses
 
 
 @pytest.fixture
 def board(user, project):
     return Board.objects.create(name="Test Board", created_by=user, project=project)
+
+
+@pytest.fixture
+def statuses(project):
+    return seed_default_statuses(project)
 
 
 @pytest.mark.django_db
@@ -67,9 +73,9 @@ def test_undated_items_break_ties_on_priority(auth_client, board, user):
 
 
 @pytest.mark.django_db
-def test_finished_items_are_excluded(auth_client, board, user):
-    WorkItem.objects.create(board=board, title="Still going", assignee=user, status="todo")
-    WorkItem.objects.create(board=board, title="Finished", assignee=user, status="done")
+def test_finished_items_are_excluded(auth_client, board, user, statuses):
+    WorkItem.objects.create(board=board, title="Still going", assignee=user, status=statuses["todo"])
+    WorkItem.objects.create(board=board, title="Finished", assignee=user, status=statuses["done"])
 
     response = auth_client.get("/api/me/tasks/")
 

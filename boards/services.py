@@ -54,7 +54,7 @@ def resolve_default_status(project):
     return seed_default_statuses(project)["todo"]
 
 
-def next_position(board_id: int, status: str) -> int:
+def next_position(board_id: int, status_id: int) -> int:
     """The position a new work item takes: the end of its column.
 
     This read is deliberately UNLOCKED. Two concurrent creates into the
@@ -79,7 +79,7 @@ def next_position(board_id: int, status: str) -> int:
     "fix" this by locking next_position(); the cost (a lock on every
     create) buys nothing that isn't already covered above.
     """
-    highest = WorkItem.objects.filter(board_id=board_id, status=status).aggregate(
+    highest = WorkItem.objects.filter(board_id=board_id, status_id=status_id).aggregate(
         highest=Max("position")
     )["highest"]
     return 0 if highest is None else highest + 1
@@ -312,7 +312,7 @@ def apply_custom_fields(work_item, payload):
 
 
 @transaction.atomic
-def move_work_item(item: WorkItem, new_status: str, new_position: int) -> WorkItem:
+def move_work_item(item: WorkItem, new_status_id: int, new_position: int) -> WorkItem:
     """Drop a work item into a column at a position, then renumber the
     affected columns.
 
@@ -365,14 +365,14 @@ def move_work_item(item: WorkItem, new_status: str, new_position: int) -> WorkIt
             f"WorkItem {item.pk} was deleted before the move could be applied."
         )
 
-    old_status = locked_by_pk[item.pk].status
-    item.status = new_status
+    old_status_id = locked_by_pk[item.pk].status_id
+    item.status_id = new_status_id
 
-    def renumber(status: str) -> list[WorkItem]:
-        column = [c for c in locked if c.status == status and c.pk != item.pk]
+    def renumber(status_id: int) -> list[WorkItem]:
+        column = [c for c in locked if c.status_id == status_id and c.pk != item.pk]
         column.sort(key=lambda c: (c.position, c.pk))
 
-        if status == new_status:
+        if status_id == new_status_id:
             index = max(0, min(new_position, len(column)))
             column.insert(index, item)
 
@@ -382,9 +382,9 @@ def move_work_item(item: WorkItem, new_status: str, new_position: int) -> WorkIt
             member.updated_at = now
         return column
 
-    touched = renumber(new_status)
-    if old_status != new_status:
-        touched += renumber(old_status)
+    touched = renumber(new_status_id)
+    if old_status_id != new_status_id:
+        touched += renumber(old_status_id)
 
     WorkItem.objects.bulk_update(touched, ["position", "status", "updated_at"])
     return item

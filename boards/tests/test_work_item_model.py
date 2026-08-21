@@ -3,7 +3,7 @@ import datetime
 import pytest
 
 from boards.models import Board, WorkItem
-from boards.services import next_position
+from boards.services import next_position, seed_default_statuses
 
 
 @pytest.fixture
@@ -11,11 +11,16 @@ def board(user, project):
     return Board.objects.create(name="Test Board", created_by=user, project=project)
 
 
+@pytest.fixture
+def statuses(project):
+    return seed_default_statuses(project)
+
+
 @pytest.mark.django_db
-def test_work_item_defaults(board):
+def test_work_item_defaults(board, statuses):
     item = WorkItem.objects.create(board=board, title="Write the spec")
 
-    assert item.status == WorkItem.Status.TODO
+    assert item.status_id == statuses["todo"].id
     assert item.priority == WorkItem.Priority.MEDIUM
     assert item.due_date is None
     assert item.assignee is None
@@ -28,32 +33,32 @@ def test_work_item_stringifies_to_its_title(board):
 
 
 @pytest.mark.django_db
-def test_next_position_starts_at_zero(board):
-    assert next_position(board.id, WorkItem.Status.TODO) == 0
+def test_next_position_starts_at_zero(board, statuses):
+    assert next_position(board.id, statuses["todo"].id) == 0
 
 
 @pytest.mark.django_db
-def test_next_position_appends_to_the_end_of_its_column(board):
-    WorkItem.objects.create(board=board, title="A", status=WorkItem.Status.TODO, position=0)
-    WorkItem.objects.create(board=board, title="B", status=WorkItem.Status.TODO, position=1)
+def test_next_position_appends_to_the_end_of_its_column(board, statuses):
+    WorkItem.objects.create(board=board, title="A", status=statuses["todo"], position=0)
+    WorkItem.objects.create(board=board, title="B", status=statuses["todo"], position=1)
 
-    assert next_position(board.id, WorkItem.Status.TODO) == 2
-
-
-@pytest.mark.django_db
-def test_next_position_counts_each_column_separately(board):
-    WorkItem.objects.create(board=board, title="A", status=WorkItem.Status.TODO, position=0)
-    WorkItem.objects.create(board=board, title="B", status=WorkItem.Status.TODO, position=1)
-
-    assert next_position(board.id, WorkItem.Status.DONE) == 0
+    assert next_position(board.id, statuses["todo"].id) == 2
 
 
 @pytest.mark.django_db
-def test_work_items_are_ordered_by_position_within_a_column(board):
-    second = WorkItem.objects.create(board=board, title="Second", position=1)
-    first = WorkItem.objects.create(board=board, title="First", position=0)
+def test_next_position_counts_each_column_separately(board, statuses):
+    WorkItem.objects.create(board=board, title="A", status=statuses["todo"], position=0)
+    WorkItem.objects.create(board=board, title="B", status=statuses["todo"], position=1)
 
-    assert list(WorkItem.objects.filter(status=WorkItem.Status.TODO)) == [first, second]
+    assert next_position(board.id, statuses["done"].id) == 0
+
+
+@pytest.mark.django_db
+def test_work_items_are_ordered_by_position_within_a_column(board, statuses):
+    second = WorkItem.objects.create(board=board, title="Second", status=statuses["todo"], position=1)
+    first = WorkItem.objects.create(board=board, title="First", status=statuses["todo"], position=0)
+
+    assert list(WorkItem.objects.filter(status=statuses["todo"])) == [first, second]
 
 
 @pytest.mark.django_db

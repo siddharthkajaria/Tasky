@@ -1,11 +1,17 @@
 import pytest
 
 from boards.models import Board, WorkItem
+from boards.services import seed_default_statuses
 
 
 @pytest.fixture
 def board(user, project):
     return Board.objects.create(name="Test Board", created_by=user, project=project)
+
+
+@pytest.fixture
+def statuses(project):
+    return seed_default_statuses(project)
 
 
 @pytest.mark.django_db
@@ -27,8 +33,8 @@ def test_listing_a_boards_work_items(auth_client, board, user, project):
 
 
 @pytest.mark.django_db
-def test_creating_a_work_item_sets_creator_and_appends_it(auth_client, board, user):
-    WorkItem.objects.create(board=board, title="Existing", status="todo", position=0)
+def test_creating_a_work_item_sets_creator_and_appends_it(auth_client, board, user, statuses):
+    WorkItem.objects.create(board=board, title="Existing", status=statuses["todo"], position=0)
 
     response = auth_client.post(
         "/api/work-items/",
@@ -39,7 +45,7 @@ def test_creating_a_work_item_sets_creator_and_appends_it(auth_client, board, us
     assert response.status_code == 201
     body = response.json()
     assert body["position"] == 1
-    assert body["status"] == "todo"
+    assert body["status_detail"]["category"] == "todo"
     assert body["priority"] == 2
     assert body["priority_label"] == "Medium"
     assert WorkItem.objects.get(title="New item").created_by == user
@@ -150,44 +156,44 @@ def test_title_is_required(auth_client, board):
 
 
 @pytest.mark.django_db
-def test_patching_status_is_rejected(auth_client, board):
-    item = WorkItem.objects.create(board=board, title="Untouched", status="todo")
+def test_patching_status_is_rejected(auth_client, board, statuses):
+    item = WorkItem.objects.create(board=board, title="Untouched", status=statuses["todo"])
 
     response = auth_client.patch(
         f"/api/work-items/{item.id}/",
-        {"status": "done"},
+        {"status": statuses["done"].id},
         content_type="application/json",
     )
 
     assert response.status_code == 400
     assert "status" in response.json()
     item.refresh_from_db()
-    assert item.status == "todo"
+    assert item.status_id == statuses["todo"].id
 
 
 @pytest.mark.django_db
-def test_patching_with_status_unchanged_still_updates_other_fields(auth_client, board):
+def test_patching_with_status_unchanged_still_updates_other_fields(auth_client, board, statuses):
     """A UI that PATCHes back the full set of fields it's holding — status
     included, but unchanged — must not have a genuine edit (title, here)
     rejected just because "status" was present in the body. Only an actual
     status CHANGE is rejected."""
-    item = WorkItem.objects.create(board=board, title="Before", status="todo")
+    item = WorkItem.objects.create(board=board, title="Before", status=statuses["todo"])
 
     response = auth_client.patch(
         f"/api/work-items/{item.id}/",
-        {"status": "todo", "title": "After"},
+        {"status": statuses["todo"].id, "title": "After"},
         content_type="application/json",
     )
 
     assert response.status_code == 200
     item.refresh_from_db()
     assert item.title == "After"
-    assert item.status == "todo"
+    assert item.status_id == statuses["todo"].id
 
 
 @pytest.mark.django_db
-def test_patching_title_still_works(auth_client, board):
-    item = WorkItem.objects.create(board=board, title="Before", status="todo")
+def test_patching_title_still_works(auth_client, board, statuses):
+    item = WorkItem.objects.create(board=board, title="Before", status=statuses["todo"])
 
     response = auth_client.patch(
         f"/api/work-items/{item.id}/",
@@ -198,13 +204,13 @@ def test_patching_title_still_works(auth_client, board):
     assert response.status_code == 200
     item.refresh_from_db()
     assert item.title == "After"
-    assert item.status == "todo"
+    assert item.status_id == statuses["todo"].id
 
 
 @pytest.mark.django_db
-def test_patching_board_is_rejected(auth_client, board, user, project):
+def test_patching_board_is_rejected(auth_client, board, user, project, statuses):
     other_board = Board.objects.create(name="Elsewhere", created_by=user, project=project)
-    item = WorkItem.objects.create(board=board, title="Untouched", status="todo")
+    item = WorkItem.objects.create(board=board, title="Untouched", status=statuses["todo"])
 
     response = auth_client.patch(
         f"/api/work-items/{item.id}/",
@@ -219,11 +225,11 @@ def test_patching_board_is_rejected(auth_client, board, user, project):
 
 
 @pytest.mark.django_db
-def test_patching_with_board_unchanged_still_updates_other_fields(auth_client, board):
+def test_patching_with_board_unchanged_still_updates_other_fields(auth_client, board, statuses):
     """Same protection as status: a PATCH that echoes back the item's
     current, unchanged board alongside a genuine edit (title, here) must
     not be rejected just because "board" was present in the body."""
-    item = WorkItem.objects.create(board=board, title="Before", status="todo")
+    item = WorkItem.objects.create(board=board, title="Before", status=statuses["todo"])
 
     response = auth_client.patch(
         f"/api/work-items/{item.id}/",
@@ -235,18 +241,3 @@ def test_patching_with_board_unchanged_still_updates_other_fields(auth_client, b
     item.refresh_from_db()
     assert item.title == "After"
     assert item.board_id == board.id
-
-
-@pytest.mark.django_db
-def test_creating_a_work_item_with_an_explicit_status_still_works(auth_client, board):
-    response = auth_client.post(
-        "/api/work-items/",
-        {"board": board.id, "title": "Started already", "status": "in_progress"},
-        content_type="application/json",
-    )
-
-    assert response.status_code == 201
-    body = response.json()
-    assert body["status"] == "in_progress"
-    assert body["position"] == 0
-    assert WorkItem.objects.get(title="Started already").status == "in_progress"

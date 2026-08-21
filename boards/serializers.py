@@ -3,7 +3,7 @@ from rest_framework import serializers
 from accounts.serializers import UserSerializer
 
 from .models import Board, Comment, Component, CustomField, FieldOption, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
-from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error
+from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status
 
 VALID_PARENT_TYPES = {
     WorkItem.ItemType.EPIC: [],
@@ -149,13 +149,21 @@ class ScreenSerializer(serializers.ModelSerializer):
         return clean
 
 
+class WorkItemStatusSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WorkItemStatus
+        fields = ["id", "name", "category"]
+
+
 class WorkItemSummarySerializer(serializers.ModelSerializer):
     """Enough to identify and link to another work item, without pulling
     its full field set — used for parent_detail and the children list."""
 
+    status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
+
     class Meta:
         model = WorkItem
-        fields = ["id", "key", "title", "item_type", "status"]
+        fields = ["id", "key", "title", "item_type", "status", "status_detail"]
 
 
 class WorkItemSerializer(serializers.ModelSerializer):
@@ -164,13 +172,15 @@ class WorkItemSerializer(serializers.ModelSerializer):
     priority_label = serializers.CharField(source="get_priority_display", read_only=True)
     parent_detail = WorkItemSummarySerializer(source="parent", read_only=True)
     components_detail = ComponentSerializer(source="components", many=True, read_only=True)
+    status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
+    status = serializers.PrimaryKeyRelatedField(queryset=WorkItemStatus.objects.all(), required=False)
     custom_fields = serializers.DictField(required=False, write_only=True)
 
     class Meta:
         model = WorkItem
         fields = [
             "id", "key", "board", "item_type", "title", "description",
-            "status", "priority", "priority_label", "due_date",
+            "status", "status_detail", "priority", "priority_label", "due_date",
             "assignee", "assignee_detail", "parent", "parent_detail",
             "components", "components_detail", "custom_fields",
             "position", "created_by", "created_at", "updated_at",
@@ -218,6 +228,18 @@ class WorkItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"components": "Components must belong to this item's project."}
                 )
+
+        board = attrs.get("board") or (self.instance.board if self.instance else None)
+        if "status" in attrs:
+            if attrs["status"].project_id != board.project_id:
+                raise serializers.ValidationError({"status": "Status must belong to this item's project."})
+        elif is_create:
+            # No static model-level default is possible (the right default
+            # depends on which project this item's board belongs to), so
+            # inject a real one here rather than leaving it to WorkItem.save()'s
+            # lazy fallback — perform_create needs the resolved status BEFORE
+            # save() runs, to compute next_position() correctly.
+            attrs["status"] = resolve_default_status(board.project)
 
         if is_create or "custom_fields" in attrs:
             # On create, the check must run even when `custom_fields` is
@@ -275,7 +297,7 @@ class WorkItemLinkSerializer(serializers.ModelSerializer):
 
 
 class MoveWorkItemSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=WorkItem.Status.choices)
+    status = serializers.PrimaryKeyRelatedField(queryset=WorkItemStatus.objects.all())
     position = serializers.IntegerField(min_value=0)
 
 

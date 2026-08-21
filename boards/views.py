@@ -66,9 +66,9 @@ class BoardViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="work-items")
     def work_items(self, request, pk=None):
         board = self.get_object()
-        items = board.work_items.select_related("assignee", "created_by", "parent").prefetch_related(
-            "components", "field_values__field"
-        )
+        items = board.work_items.select_related(
+            "assignee", "created_by", "parent", "parent__status", "status"
+        ).prefetch_related("components", "field_values__field")
         return Response(WorkItemSerializer(items, many=True).data)
 
 
@@ -79,7 +79,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = WorkItem.objects.select_related(
-            "board__project", "assignee", "created_by", "parent"
+            "board__project", "assignee", "created_by", "parent", "parent__status", "status"
         ).prefetch_related("components", "field_values__field")
         if self.action == "list":
             qs = qs.filter(
@@ -99,10 +99,10 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         # apart, and keeps the lock + increment + INSERT in one atomic block
         # instead of splitting them across two.
         board = serializer.validated_data["board"]
-        status = serializer.validated_data.get("status", WorkItem.Status.TODO)
+        status = serializer.validated_data["status"]
         serializer.save(
             created_by=self.request.user,
-            position=next_position(board.id, status),
+            position=next_position(board.id, status.id),
         )
 
     def update(self, request, *args, **kwargs):
@@ -123,7 +123,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         # endpoint to redirect to; a real change is just rejected outright.
         if "status" in request.data or "board" in request.data or "item_type" in request.data or "key" in request.data:
             item = self.get_object()
-            if "status" in request.data and request.data["status"] != item.status:
+            if "status" in request.data and str(request.data["status"]) != str(item.status_id):
                 raise ValidationError(
                     {
                         "status": (
@@ -150,11 +150,14 @@ class WorkItemViewSet(viewsets.ModelViewSet):
 
         serializer = MoveWorkItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        target_status = serializer.validated_data["status"]
+        if target_status.project_id != item.board.project_id:
+            raise ValidationError({"status": "Status must belong to this item's project."})
 
         try:
             move_work_item(
                 item,
-                serializer.validated_data["status"],
+                target_status.id,
                 serializer.validated_data["position"],
             )
         except WorkItem.DoesNotExist:
@@ -401,19 +404,15 @@ class WorkItemStatusViewSet(viewsets.ModelViewSet):
                 status.save(update_fields=["position"])
 
     def perform_destroy(self, instance):
-        # No "still in use by a work item" guard yet — WorkItem.status is
-        # still a plain CharField at this point in the plan (Task 2 converts
-        # it to a ForeignKey to WorkItemStatus), so there is no relationship
-        # to query here at all. Task 2 replaces this method with the real
-        # guard once that FK — and the reverse accessor it creates — exists.
-        # This mirrors sub-project 2b's CustomField/Screen/FieldOption
-        # delete guards, each of which shipped unguarded in the task that
-        # introduced the model and gained its real guard in a later task
-        # once the model it needed to check against existed.
         role = instance.project.memberships.get(user=self.request.user).role
         if not can_manage_statuses(role):
             raise PermissionDenied("You don't have permission to manage this project's statuses.")
 
+        in_use = instance.work_items_with_status.count()
+        if in_use:
+            raise ValidationError(
+                {"detail": f'"{instance.name}" is still used by {in_use} work item{"" if in_use == 1 else "s"}. Move {"it" if in_use == 1 else "them"} first.'}
+            )
         remaining = WorkItemStatus.objects.filter(
             project=instance.project, category=instance.category
         ).exclude(pk=instance.pk)

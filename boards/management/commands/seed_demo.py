@@ -15,6 +15,7 @@ from django.core.management.base import BaseCommand
 from django.db import connection
 
 from boards.models import Board, WorkItem
+from boards.services import seed_default_statuses
 from projects.models import Project, ProjectMembership
 
 DEMO_PASSWORD = "demo-password-12345"
@@ -80,6 +81,7 @@ class Command(BaseCommand):
             key="TASKY",
             defaults={"name": "Tasky Demo", "description": "Seeded demo project."},
         )
+        statuses = seed_default_statuses(project)
         for index, person in enumerate(people):
             ProjectMembership.objects.get_or_create(
                 project=project,
@@ -105,7 +107,7 @@ class Command(BaseCommand):
                     board=board,
                     title=title,
                     description=f"Seeded card for {board_name}.",
-                    status=status,
+                    status=statuses[status],
                     priority=priority,
                     due_date=None if due_in_days is None
                     else today + datetime.timedelta(days=due_in_days),

@@ -23,11 +23,6 @@ class Board(models.Model):
 
 
 class WorkItem(models.Model):
-    class Status(models.TextChoices):
-        TODO = "todo", "To Do"
-        IN_PROGRESS = "in_progress", "In Progress"
-        DONE = "done", "Done"
-
     class Priority(models.IntegerChoices):
         LOW = 1, "Low"
         MEDIUM = 2, "Medium"
@@ -44,8 +39,8 @@ class WorkItem(models.Model):
     title = models.CharField(max_length=200)
     key = models.CharField(max_length=20, unique=True)
     description = models.TextField(blank=True)
-    status = models.CharField(
-        max_length=20, choices=Status.choices, default=Status.TODO
+    status = models.ForeignKey(
+        "WorkItemStatus", on_delete=models.PROTECT, related_name="work_items_with_status",
     )
     priority = models.IntegerField(
         choices=Priority.choices, default=Priority.MEDIUM
@@ -99,14 +94,30 @@ class WorkItem(models.Model):
         # INSERT itself all happen inside one atomic block, so a failure in
         # the INSERT rolls back the counter increment too instead of
         # permanently burning a key number.
-        if not self.key:
+        #
+        # The same lock also guards a missing `status`: a project created
+        # directly via the ORM (every existing test fixture, seed_demo, the
+        # admin) never calls ProjectViewSet.perform_create, so it never
+        # explicitly seeds its default statuses. Seeding a project's
+        # first-ever statuses is exactly the same kind of "a duplicate is a
+        # real correctness bug" situation `key` generation already is — two
+        # concurrent first writes to the same project must not each seed
+        # their own set of 3 defaults — so it rides along under the same
+        # `select_for_update()` on that project's row rather than getting a
+        # second, separate lock.
+        if not self.key or not self.status_id:
             from projects.models import Project
 
             with transaction.atomic():
                 project = Project.objects.select_for_update().get(pk=self.board.project_id)
-                self.key = f"{project.key}-{project.next_item_number}"
-                project.next_item_number += 1
-                project.save(update_fields=["next_item_number"])
+                if not self.status_id:
+                    from .services import resolve_default_status
+
+                    self.status = resolve_default_status(project)
+                if not self.key:
+                    self.key = f"{project.key}-{project.next_item_number}"
+                    project.next_item_number += 1
+                    project.save(update_fields=["next_item_number"])
                 super().save(*args, **kwargs)
         else:
             super().save(*args, **kwargs)
