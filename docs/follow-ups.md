@@ -133,6 +133,52 @@ review were fixed before merge; these are what's left.
   it's a much smaller version of the problem it fixed — not worth its own fix unless work items
   routinely carry many custom fields.
 
+## Carried out of the Workflows backend build (2026-08-21)
+
+Nothing here blocks the backend — each item was considered during the final whole-branch review
+and consciously deferred. The Critical (project-deletion crash) and Important (reachable KeyError,
+silently-dropped composite index) findings from that review were fixed before merge; these are
+what's left.
+
+- **`seed_default_statuses`'s early-return dict is ambiguous when a project has 2+ statuses in the
+  same default category.** If a project has two `todo`-category statuses, the dict returned keys
+  both under `"todo"` — whichever was read last wins, not necessarily the lowest-position one.
+  `resolve_default_status` doesn't have this problem (it explicitly queries the lowest-position
+  status), so there's no live bug — `seed_demo` is the only direct consumer of the dict, and it only
+  ever runs against fresh projects. Worth documenting as "one arbitrary status per category" or
+  making it lowest-position-wins if another consumer appears.
+- **`resolve_default_status`'s docstring is more conservative than what it actually does.** It reads
+  as "tops up the `todo` category specifically," but the underlying `seed_default_statuses` call
+  tops up *any* missing default category, not just `todo`. The code is more robust than documented,
+  not a bug — just worth tightening the wording next time this function is touched.
+- **A rejected status `PATCH` (bad `position`) can still commit a `name`/`category` change first.**
+  `WorkItemStatusViewSet.perform_update` calls `serializer.save()` before `_reposition()` raises —
+  inherited verbatim from sub-project 2b's `FieldOptionViewSet`/`ScreenFieldViewSet`, which have the
+  identical ordering. Fix, if ever prioritized, belongs to whichever sub-project next touches all
+  three call sites together: validate `position` before saving, or wrap `perform_update` in
+  `transaction.atomic`.
+- **No automated test proves the data migrations lose nothing.** The spec explicitly asks for this
+  ("verify no data loss — every pre-migration `(work_item, status_string)` pair maps to the
+  identical status after migration"); the implementer's live spot-check against the dev database
+  isn't repeatable. This codebase has no migration-test precedent anywhere, so this is consistent
+  with local norms rather than a lapse — but the spec did name it, so it's recorded here rather than
+  silently dropped.
+- **Reversing migrations `0019`/`0021` silently no-ops instead of raising.** Rolling back past
+  `0022` would re-create a plain `status` CharField and flatten every work item back to a fresh
+  `"todo"` default, with no error to signal the data shape was lossy going backward. Only relevant
+  to a rollback scenario, not the forward path this branch ships — but worth raising instead of
+  no-op'ing if a rollback is ever actually attempted.
+- **`docs/api.md` doesn't mention that `WorkItemSummarySerializer` (used by `parent_detail` and
+  `GET /api/work-items/{id}/children/`) gained a `status_detail` field.** Also worth a line
+  clarifying that the spec's "genuinely nonexistent status id → 404" applies to the
+  `/api/projects/{id}/statuses/{id}/` routes specifically — a bad status id in a work-item body
+  field correctly 400s instead, since it's a field-level validation error, not a missing resource.
+- **`Project.delete()`'s override (added to fix the PROTECT/CASCADE deletion crash) only covers
+  instance-level deletes**, not a hypothetical bulk `Project.objects.filter(...).delete()` — Django
+  doesn't call `.delete()` per-instance for a queryset bulk delete, so such a call would bypass the
+  override and hit the same `ProtectedError` this build just fixed. No such call site exists
+  anywhere in the codebase today; recorded so whoever adds one first knows to check this.
+
 ## Local development note
 
 This machine's `.env` uses `MYSQL_PORT=3307` because a second MySQL occupies 3306. `.env.example`
