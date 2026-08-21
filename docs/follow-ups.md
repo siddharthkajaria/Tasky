@@ -57,6 +57,14 @@ considered and consciously deferred. Recorded so the next two plans don't redisc
   delete, move, and comment call. Recorded here so it isn't rediscovered as a mystery bug —
   the fix belongs to whichever sub-project next touches the UI for hierarchy.
 
+## Known breakage from the Workflows backend (Statuses)
+
+- **`design/js/store.js` and `ui/static/js/store.js` still send strings to `POST /api/work-items/{id}/move/`.** The
+  move endpoint now requires `{status: <WorkItemStatus id>, position: <int>}` instead of
+  `{status: "todo"|"in_progress"|"done", position: <int>}`. Any code sending the old string enum values will
+  receive a 400 validation error. Recorded here so it isn't rediscovered as a mystery bug — the fix
+  belongs to whichever UI sub-project next touches the move logic for board drag-and-drop.
+
 ## Carried out of the Custom Fields & Screens backend build (2026-08-18)
 
 Nothing here blocks the backend — each item was considered during the final whole-branch review

@@ -76,12 +76,15 @@ other removal).
 | GET | `/api/work-items/` | every work item on a board in a project I'm a member of |
 | POST | `/api/work-items/` | `{board, item_type, title, description?, status?, priority?, due_date?, assignee?, parent?, components?}` |
 | GET/PUT/PATCH/DELETE | `/api/work-items/{id}/` | `key`, `item_type`, `position` are immutable; `status`/`board` unchanged from before |
-| POST | `/api/work-items/{id}/move/` | unchanged — the drag-and-drop endpoint |
+| POST | `/api/work-items/{id}/move/` | **breaking change:** `status` is now a `WorkItemStatus` id, not a string; see note below |
 | GET | `/api/boards/{id}/work-items/` | every work item on that board |
 | GET | `/api/work-items/{id}/children/` | direct children only (not grandchildren) |
 | GET/POST | `/api/work-items/{id}/links/` | list / create a "relates to" link; POST body is `{item: <other work item id>}` |
 
-`status` is one of `todo`, `in_progress`, `done`, and **defaults to `todo` when omitted on create.**
+**On write (POST/PATCH)**, `status` accepts a `WorkItemStatus` id (an integer) and **defaults to the project's default status for the `todo` category when omitted on create.** On read (GET), `status` is an integer id; `status_detail` is a read-only nested object `{id, name, category}` that includes the status name and category alongside the id. Both fields appear in every work item response.
+
+**BREAKING CHANGE:** `POST /api/work-items/{id}/move/` now takes `{status: <WorkItemStatus id>, position: <int>}` instead of `{status: "todo"|"in_progress"|"done", position: <int>}`. Any client code sending the old string enum values will receive a 400 error. The request must include a real status id. If sending a status from a different project than the work item's, a 400 is rejected with `{"status": "Status must belong to this item's project."}`.
+
 `priority` is `1` low, `2` medium, `3` high; responses also carry `priority_label`.
 
 `item_type` is one of `epic`, `story`, `task`, `bug`, `subtask` — fixed for every project. `key` (e.g. `TASKY-123`) is generated on create from a per-project counter shared across every type and board, and can never be changed afterward. `parent` must be an Epic for a Story/Task/Bug, must be a Story/Task/Bug for a Subtask (required, not optional), can never be set on an Epic, and must be on the same board as the child — violating any of these is a `400` naming `parent`. Deleting a work item clears its children's `parent` rather than deleting them.
@@ -90,7 +93,7 @@ other removal).
 
 **`board` cannot be changed via `PATCH`/`PUT` on `/api/work-items/{id}/` either, for the same reason.** Work items do not move between boards in this product at all — a request whose `board` differs from the work item's current board is rejected with 400: `{"board": "Work items cannot be moved between boards."}`. As with `status`, a `PATCH` that echoes back the work item's current, unchanged `board` alongside other real edits is accepted.
 
-Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), and `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
+Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `status_detail` (a nested `{id, name, category}` object for the current `status`, returned alongside the raw `status` id), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), and `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
 
 **`position` is not a system-wide contiguous `0..n-1` invariant** — it is only guaranteed to give a column a deterministic total order (ties broken by `id`), and it is renormalised to a clean `0..n-1` at the moment `/move/` renumbers that column. Deleting a work item, for instance, does **not** renumber anything afterward, so gaps (`0, 2, 3`, say) are expected and harmless — never treat a gap as a sign of corrupted data, and never rely on `position` values being consecutive.
 
@@ -101,6 +104,22 @@ Work item responses also carry read-only extras beyond the writable fields above
 | PATCH/DELETE | `/api/projects/{id}/components/{id}/` | Owner/Admin only |
 
 Any project member can apply an existing component to a work item via `PATCH /api/work-items/{id}/ {"components": [...]}"` — a component from a different project than the work item's is rejected with `400`.
+
+## Work Item Statuses
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/projects/{id}/statuses/` | GET is readable by any project member; POST is Owner/Admin only |
+| PATCH/DELETE | `/api/projects/{id}/statuses/{id}/` | Owner/Admin only |
+
+Each status has a `category` (one of `todo`, `in_progress`, `done`) and a `name` scoped to the project. Responses include `{id, project, name, category, position}`. `project` and `position` are read-only.
+
+**PATCH accepts `{name, category, position}`** (all optional). A category change is rejected with 400 if it's the last remaining status in the original category — every category must always have at least one status.
+
+**DELETE is rejected with 400 in two cases:**
+- The status is still in use by one or more work items: `"<name>" is still used by <N> work item(s). Move them first."`
+- It's the last remaining status in its category: `"<Category> needs at least one status."`
+
+When a status is deleted, all other statuses in the project are reordered (`position` values are renormalised to `0..n-1`).
 
 ## Custom Fields
 | Method | Path | Notes |
@@ -180,3 +199,5 @@ See `GET/POST /api/work-items/{id}/links/` above for listing/creating. Self-link
 |---|---|---|
 | GET | `/api/me/tasks/` | my open work items in a project I'm still a member of, soonest due first |
 | GET | `/api/users/` | `id`, `username`, `display_name` for the assignee dropdown |
+
+**`/api/me/tasks/` exclusion is category-based, not status-based.** It excludes every work item whose status has `category = "done"`, not just those with a literal status named "Done". A project that recategorizes a status (e.g. renames an `in_progress` status to `done` category, or vice versa) will silently change which work items appear here without any change to the endpoint itself.
