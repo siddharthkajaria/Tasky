@@ -95,16 +95,28 @@ class WorkItem(models.Model):
         # the INSERT rolls back the counter increment too instead of
         # permanently burning a key number.
         #
-        # The same lock also guards a missing `status`: a project created
-        # directly via the ORM (every existing test fixture, seed_demo, the
-        # admin) never calls ProjectViewSet.perform_create, so it never
-        # explicitly seeds its default statuses. Seeding a project's
-        # first-ever statuses is exactly the same kind of "a duplicate is a
-        # real correctness bug" situation `key` generation already is — two
-        # concurrent first writes to the same project must not each seed
-        # their own set of 3 defaults — so it rides along under the same
-        # `select_for_update()` on that project's row rather than getting a
-        # second, separate lock.
+        # The same lock also guards a missing `status`, but ONLY for this
+        # direct-ORM/self-healing path (every existing test fixture,
+        # seed_demo, the admin, a project created without going through
+        # ProjectViewSet.perform_create) — a project reached this way never
+        # explicitly seeds its default statuses ahead of time, so the first
+        # WorkItem.save() against it does that seeding itself, right here,
+        # under this same `select_for_update()` on the project row. Two
+        # concurrent first writes to such a project must not each seed
+        # their own set of 3 defaults, so it rides along under the same
+        # lock rather than getting a second, separate one.
+        #
+        # This is NOT what makes the API creation path race-safe. There,
+        # `WorkItemSerializer.validate()` resolves the default status
+        # BEFORE `save()` runs and outside any transaction (`ATOMIC_REQUESTS`
+        # isn't set — see config/settings.py), so it never reaches this
+        # lock at all. That path is race-free in practice for a different
+        # reason: `ProjectViewSet.perform_create` seeds a project's 3
+        # default statuses synchronously, in the same transaction as the
+        # Project row itself, before any request can create a work item
+        # against it — so by the time any API-created WorkItem asks for a
+        # default status, the project's statuses already exist and there is
+        # no first-seed race left to have.
         if not self.key or not self.status_id:
             from projects.models import Project
 

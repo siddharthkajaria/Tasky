@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 
 
 class Project(models.Model):
@@ -14,6 +14,31 @@ class Project(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.key})"
+
+    def delete(self, *args, **kwargs):
+        """Project -> Board -> WorkItem is CASCADE, and Project ->
+        WorkItemStatus is also CASCADE, but WorkItem.status (a FK to
+        WorkItemStatus) is on_delete=PROTECT. Django's deletion collector
+        evaluates PROTECT the moment it finds any WorkItem still pointing
+        at a WorkItemStatus that is about to be deleted — it does not make
+        an exception for "that WorkItem is also being deleted in this same
+        operation." Left alone, deleting a Project with at least one work
+        item raises an uncaught ProtectedError.
+
+        So work items must already be gone before the cascade reaches
+        their project's statuses: delete this project's work items (via
+        its boards) explicitly first, in the same transaction, then let
+        the rest of the cascade (boards, statuses, memberships,
+        invitations, comments, links, field values, ...) proceed as
+        normal. This lives on the model so every caller — the API, the
+        admin, a management command, a test — gets a Project deletion that
+        actually works, not just the one call site that happened to be
+        exercised first."""
+        from boards.models import WorkItem
+
+        with transaction.atomic():
+            WorkItem.objects.filter(board__project=self).delete()
+            return super().delete(*args, **kwargs)
 
 
 class ProjectMembership(models.Model):

@@ -140,6 +140,34 @@ def test_patching_with_status_echoed_back_unchanged_still_updates_other_fields(a
 
 
 @pytest.mark.django_db
+def test_creating_a_work_item_when_a_project_has_no_todo_status_self_heals(auth_client, board, project):
+    """Regression test: resolve_default_status()'s KeyError is genuinely
+    reachable, not theoretical — WorkItemStatusAdmin has no guard against
+    recategorizing or deleting a project's last todo-category status (the
+    API's last-in-category guard only lives on WorkItemStatusViewSet), so a
+    project can end up with statuses but none in the `todo` category. That
+    used to raise an uncaught KeyError on the next work item creation.
+    Recategorizing the seeded `todo` status away reproduces exactly that
+    shape without touching the admin directly."""
+    statuses = seed_default_statuses(project)
+    todo = statuses["todo"]
+    todo.category = "in_progress"
+    todo.save()
+    assert WorkItemStatus.objects.filter(project=project, category="todo").count() == 0
+
+    response = auth_client.post(
+        "/api/work-items/", {"board": board.id, "title": "No explicit status"}, content_type="application/json"
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status_detail"]["category"] == "todo"
+
+    item = WorkItem.objects.create(board=board, title="Via direct ORM too")
+    assert item.status.category == "todo"
+
+
+@pytest.mark.django_db
 def test_deleting_a_status_still_used_by_a_work_item_is_rejected(auth_client, board, project):
     """The real guard on WorkItemStatusViewSet.perform_destroy, now that
     WorkItem.status is a real FK — Task 1 left this endpoint unguarded

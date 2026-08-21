@@ -47,13 +47,19 @@ class ProjectViewSet(
         return qs
 
     def perform_create(self, serializer):
-        project = serializer.save()
-        ProjectMembership.objects.create(
-            project=project, user=self.request.user, role=ProjectMembership.Role.OWNER
-        )
-        from boards.services import seed_default_statuses
+        # Per the Workflows design spec, a project's default statuses are
+        # "created alongside the Project row itself, same transaction" —
+        # wrap the membership + status-seeding writes in one atomic block
+        # so that guarantee actually holds (a failure partway through never
+        # leaves a Project with an owner but no statuses, or vice versa).
+        with transaction.atomic():
+            project = serializer.save()
+            ProjectMembership.objects.create(
+                project=project, user=self.request.user, role=ProjectMembership.Role.OWNER
+            )
+            from boards.services import seed_default_statuses
 
-        seed_default_statuses(project)
+            seed_default_statuses(project)
 
     def perform_destroy(self, instance):
         membership = instance.memberships.get(user=self.request.user)

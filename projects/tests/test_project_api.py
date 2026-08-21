@@ -1,5 +1,6 @@
 import pytest
 
+from boards.models import Board, WorkItem, WorkItemStatus
 from projects.models import Project, ProjectMembership
 
 
@@ -104,8 +105,6 @@ def test_editing_a_project_is_not_allowed(auth_client, user):
 
 @pytest.mark.django_db
 def test_deleting_a_project_cascades_to_its_boards(auth_client, user):
-    from boards.models import Board
-
     project = Project.objects.create(key="TASKY", name="Tasky Redesign")
     ProjectMembership.objects.create(project=project, user=user, role="owner")
     board = Board.objects.create(name="Doomed", created_by=user, project=project)
@@ -113,3 +112,29 @@ def test_deleting_a_project_cascades_to_its_boards(auth_client, user):
     auth_client.delete(f"/api/projects/{project.id}/")
 
     assert not Board.objects.filter(id=board.id).exists()
+
+
+@pytest.mark.django_db
+def test_deleting_a_project_with_work_items_succeeds_and_leaves_nothing_behind(auth_client, user):
+    """Regression test: WorkItem.status is on_delete=PROTECT while
+    WorkItemStatus.project is on_delete=CASCADE, so deleting a Project that
+    still has work items used to raise an uncaught ProtectedError (a 500)
+    the moment Django's cascade collector reached the project's statuses —
+    Project.delete() must clear out work items first so the cascade can
+    proceed cleanly."""
+    project = Project.objects.create(key="TASKY", name="Tasky Redesign")
+    ProjectMembership.objects.create(project=project, user=user, role="owner")
+    board = Board.objects.create(name="Doomed", created_by=user, project=project)
+    response = auth_client.post(
+        "/api/work-items/", {"board": board.id, "title": "About to be deleted"}, content_type="application/json"
+    )
+    assert response.status_code == 201
+    work_item_id = response.json()["id"]
+
+    response = auth_client.delete(f"/api/projects/{project.id}/")
+
+    assert response.status_code == 204
+    assert not Project.objects.filter(id=project.id).exists()
+    assert not Board.objects.filter(id=board.id).exists()
+    assert not WorkItem.objects.filter(id=work_item_id).exists()
+    assert not WorkItemStatus.objects.filter(project_id=project.id).exists()
