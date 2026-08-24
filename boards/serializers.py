@@ -209,7 +209,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
     priority_label = serializers.CharField(source="get_priority_display", read_only=True)
     parent_detail = WorkItemSummarySerializer(source="parent", read_only=True)
     components_detail = ComponentSerializer(source="components", many=True, read_only=True)
-    labels = serializers.ListField(child=serializers.CharField(), required=False, write_only=True)
+    labels = serializers.ListField(child=serializers.CharField(allow_blank=True), required=False, write_only=True)
     labels_detail = LabelSummarySerializer(source="labels", many=True, read_only=True)
     status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
     status = serializers.PrimaryKeyRelatedField(queryset=WorkItemStatus.objects.all(), required=False)

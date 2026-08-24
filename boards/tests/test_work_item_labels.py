@@ -72,7 +72,15 @@ def test_a_blank_label_name_is_rejected(auth_client, board):
         content_type="application/json",
     )
     assert response.status_code == 400
-    assert "labels" in response.json()
+    # DRF wraps a dict-shaped serializer.validate() error into
+    # {field: [messages]} (see rest_framework.serializers.as_serializer_error),
+    # so this is the real response shape — not the per-index
+    # {1: ["This field may not be blank."]} shape DRF's own field-level
+    # CharField(blank) check would produce if it fired instead of our
+    # object-level validate() check. Asserting the exact list here pins
+    # down that our custom message actually reaches the response, and
+    # would catch a regression back to that dead-code state.
+    assert response.json()["labels"] == ["A label name can't be blank."]
     assert not WorkItem.objects.filter(title="X").exists()
 
 
