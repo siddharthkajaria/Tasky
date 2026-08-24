@@ -336,7 +336,7 @@ class LabelViewSet(viewsets.ModelViewSet):
     serializer_class = LabelSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = None
-    queryset = Label.objects.all()
+    queryset = Label.objects.select_related("created_by")
 
     def perform_update(self, serializer):
         if not user_can_manage_definitions(self.request.user):

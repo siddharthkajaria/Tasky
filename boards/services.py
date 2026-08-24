@@ -1,7 +1,7 @@
 import datetime
 import re
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -19,17 +19,20 @@ LABEL_PALETTE = [
 def label_color_for(name: str) -> str:
     """Deterministic — the same name always resolves to the same palette
     color, including after a delete-and-recreate. Mirrors
-    design/js/store.js's hashLabelColor exactly (32-bit unsigned overflow,
-    replicated here with an explicit mask since Python ints don't wrap),
-    so the prototype and the real API render the same color for the same
-    name."""
+    design/js/store.js's hashLabelColor for BMP characters (32-bit unsigned
+    overflow, replicated here with an explicit mask since Python ints don't
+    wrap) — Python's `ord(ch)` yields a full Unicode code point while JS's
+    `charCodeAt` yields a UTF-16 code unit, so the two diverge on an
+    astral-plane character (e.g. an emoji in a label name), but the
+    prototype and the real API render the same color for the same name
+    otherwise."""
     digest = 0
     for ch in name:
         digest = (digest * 31 + ord(ch)) & 0xFFFFFFFF
     return LABEL_PALETTE[digest % len(LABEL_PALETTE)]
 
 
-def resolve_labels(names):
+def resolve_labels(names, user):
     """Case-insensitive match-or-create against `Label`, in one
     transaction — a work item write can create a brand-new Label and reuse
     an existing one in the same request. Mirrors design/js/store.js's
@@ -37,7 +40,21 @@ def resolve_labels(names):
     `names` has already been validated non-blank (WorkItemSerializer.validate()
     does that, and 400s before this ever runs) — the prototype's mock
     instead drops a blank silently, which this deliberately does not
-    replicate; see this plan's Global Constraints."""
+    replicate; see this plan's Global Constraints.
+
+    `user` is the acting user, recorded as `created_by` on any brand-new
+    `Label` this call invents.
+
+    The create is collision-safe: two concurrent requests both inventing
+    the same brand-new label name can both see `.filter().first()` return
+    None and both attempt to `.create()` it — the second one hits the
+    unique constraint on `Label.name` and raises `IntegrityError`. That's
+    caught and treated as "someone else just created it", re-querying for
+    the now-existing row instead of raising. The create attempt runs
+    inside its own nested `transaction.atomic()` (a savepoint) so that,
+    on MySQL, the IntegrityError doesn't poison the outer transaction this
+    function is already called within — without the savepoint, the outer
+    atomic block would be left unusable after the exception."""
     resolved = []
     seen_ids = set()
     with transaction.atomic():
@@ -45,7 +62,11 @@ def resolve_labels(names):
             clean = raw.strip()
             label = Label.objects.filter(name__iexact=clean).first()
             if label is None:
-                label = Label.objects.create(name=clean, color=label_color_for(clean), created_by=None)
+                try:
+                    with transaction.atomic():
+                        label = Label.objects.create(name=clean, color=label_color_for(clean), created_by=user)
+                except IntegrityError:
+                    label = Label.objects.get(name__iexact=clean)
             if label.id not in seen_ids:
                 seen_ids.add(label.id)
                 resolved.append(label)

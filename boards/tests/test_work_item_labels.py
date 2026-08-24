@@ -1,6 +1,9 @@
+from unittest.mock import patch
+
 import pytest
 
 from boards.models import Board, Label, WorkItem
+from boards.services import resolve_labels
 
 
 @pytest.fixture
@@ -156,3 +159,66 @@ def test_deleting_a_label_unassigns_it_from_every_work_item_without_a_guard(auth
     item.refresh_from_db()
     assert item.labels.count() == 0
     assert WorkItem.objects.filter(id=item.id).exists()
+
+
+@pytest.mark.django_db
+def test_a_label_name_over_80_characters_is_rejected_with_400(auth_client, board):
+    """Label.name is max_length=80. The `labels` write field on
+    WorkItemSerializer is a hand-rolled ListField(child=CharField(...)),
+    not derived from the model, so it must repeat that max_length itself —
+    otherwise an over-length name sails through serializer validation and
+    reaches Label.objects.create() in resolve_labels(), where MySQL raises
+    an uncaught error instead of a clean 400."""
+    too_long = "x" * 81
+    response = auth_client.post(
+        "/api/work-items/",
+        {"board": board.id, "title": "X", "labels": [too_long]},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert "labels" in response.json()
+    assert not WorkItem.objects.filter(title="X").exists()
+
+
+@pytest.mark.django_db
+def test_a_brand_new_label_created_implicitly_records_the_acting_user(auth_client, board, user):
+    """resolve_labels() is the only place a Label is ever created in
+    production (there's no POST /api/labels/), so this is the only path
+    that can ever populate created_by."""
+    response = auth_client.post(
+        "/api/work-items/",
+        {"board": board.id, "title": "X", "labels": ["urgent"]},
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    assert Label.objects.get(name="urgent").created_by == user
+
+
+@pytest.mark.django_db
+def test_concurrent_creation_of_the_same_new_label_name_recovers_via_requery(user):
+    """resolve_labels()'s get-or-create is a check-then-act: two concurrent
+    requests can both see .filter().first() return None for a brand-new
+    name and both attempt Label.objects.create(). The second one collides
+    with the unique constraint on Label.name and must recover by
+    re-querying the row the first one created, instead of letting
+    IntegrityError bubble up as a 500 or returning None.
+
+    There's no real second DB connection here (that would need true
+    concurrency), so the race is simulated: the "competing" row is
+    pre-created as if a concurrent request had already committed it, and
+    this call's own .filter().first() lookup is forced to report None
+    anyway — exactly what it would see if its read had run just before the
+    competing transaction committed. Label.objects.create() is left real,
+    so it genuinely collides with the unique constraint and genuinely
+    exercises the except-and-requery path (and the nested-atomic/savepoint
+    handling around it) against the real database, not a mock of the
+    exception itself.
+    """
+    competing = Label.objects.create(name="urgent", color="#A32218", created_by=user)
+
+    with patch("boards.services.Label.objects.filter", return_value=Label.objects.none()):
+        resolved = resolve_labels(["urgent"], user)
+
+    assert len(resolved) == 1
+    assert resolved[0].id == competing.id
+    assert Label.objects.filter(name="urgent").count() == 1

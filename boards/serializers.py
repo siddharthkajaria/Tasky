@@ -3,7 +3,7 @@ from rest_framework import serializers
 from accounts.serializers import UserSerializer
 
 from .models import Board, Comment, Component, CustomField, FieldOption, Label, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
-from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status, resolve_labels
+from .services import LABEL_PALETTE, apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status, resolve_labels
 
 VALID_PARENT_TYPES = {
     WorkItem.ItemType.EPIC: [],
@@ -82,20 +82,7 @@ class LabelSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "color", "created_by", "created_at"]
         read_only_fields = ["created_by", "created_at"]
 
-    def validate_name(self, value):
-        clean = value.strip()
-        if not clean:
-            raise serializers.ValidationError("This field may not be blank.")
-        qs = Label.objects.filter(name__iexact=clean)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError(f'"{clean}" already exists.')
-        return clean
-
     def validate_color(self, value):
-        from .services import LABEL_PALETTE
-
         if value not in LABEL_PALETTE:
             raise serializers.ValidationError("Pick a color from the palette.")
         return value
@@ -209,7 +196,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
     priority_label = serializers.CharField(source="get_priority_display", read_only=True)
     parent_detail = WorkItemSummarySerializer(source="parent", read_only=True)
     components_detail = ComponentSerializer(source="components", many=True, read_only=True)
-    labels = serializers.ListField(child=serializers.CharField(allow_blank=True), required=False, write_only=True)
+    labels = serializers.ListField(child=serializers.CharField(allow_blank=True, max_length=80), required=False, write_only=True)
     labels_detail = LabelSummarySerializer(source="labels", many=True, read_only=True)
     status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
     status = serializers.PrimaryKeyRelatedField(queryset=WorkItemStatus.objects.all(), required=False)
@@ -311,7 +298,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
         if custom_fields:
             apply_custom_fields(instance, custom_fields)
         if label_names is not None:
-            instance.labels.set(resolve_labels(label_names))
+            instance.labels.set(resolve_labels(label_names, self.context["request"].user))
         return instance
 
     def update(self, instance, validated_data):
@@ -321,7 +308,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
         if custom_fields is not None:
             apply_custom_fields(instance, custom_fields)
         if label_names is not None:
-            instance.labels.set(resolve_labels(label_names))
+            instance.labels.set(resolve_labels(label_names, self.context["request"].user))
         return instance
 
     def to_representation(self, instance):
