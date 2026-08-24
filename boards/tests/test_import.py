@@ -167,3 +167,31 @@ def test_imported_items_get_sequential_keys_same_as_normal_creation(auth_client,
     keys = list(WorkItem.objects.filter(board=board).order_by("id").values_list("key", flat=True))
     assert len(set(keys)) == 3
     assert all(k.startswith(f"{project.key}-") for k in keys)
+
+
+@pytest.mark.django_db
+def test_imported_items_append_to_the_end_of_their_column_not_position_zero(auth_client, project, board):
+    # Regression: import_work_items_from_csv's WorkItem.objects.create() must
+    # pass position=next_position(...), same as WorkItemViewSet.perform_create
+    # does for every other creation path. Without it, every imported row lands
+    # at the model field's default position=0 and WorkItem.Meta.ordering =
+    # ["position", "id"] sorts freshly-imported rows AHEAD of whatever was
+    # already in that column, instead of appending after it.
+    seed_default_statuses(project)
+    default_status = WorkItemStatus.objects.filter(project=project, category="todo").first()
+    pre_existing = WorkItem.objects.create(
+        board=board, title="Pre-existing", status=default_status, created_by=None
+    )
+    assert pre_existing.position == 0
+
+    response = auth_client.post(
+        f"/api/boards/{board.id}/import/", {"csv": csv_file("title\nA\nB")}, format="multipart"
+    )
+    assert response.status_code == 200
+    assert response.json()["imported"] == 2
+
+    ordered = list(
+        WorkItem.objects.filter(board=board, status=default_status).order_by("position", "id")
+    )
+    assert [i.title for i in ordered] == ["Pre-existing", "A", "B"]
+    assert [i.position for i in ordered] == [0, 1, 2]

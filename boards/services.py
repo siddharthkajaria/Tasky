@@ -122,6 +122,7 @@ def import_work_items_from_csv(board, csv_file, user):
             board=board, item_type=item_type, title=title,
             description=row.get("description", ""), status=status, priority=priority,
             due_date=due_date, assignee=assignee, created_by=user,
+            position=next_position(board.id, status.id),
         )
         if component_ids:
             item.components.set(component_ids)
