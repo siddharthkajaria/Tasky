@@ -14,15 +14,13 @@ prototype of the whole product, not a one-off mockup.
 | 1 — Projects & Membership | `../docs/superpowers/specs/2026-08-13-tasky-projects-membership-design.md` | Signed off, **shipped to production** (`../ui/`, `../projects/`) |
 | 2a — Work Item Hierarchy | `../docs/superpowers/specs/2026-08-14-tasky-work-item-hierarchy-design.md` | Signed off, **shipped to production** (`boards/models.py`, `../ui/`) |
 | 2b — Custom Fields & Screens | `../docs/superpowers/specs/2026-08-18-tasky-custom-fields-screens-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
-| 3 — Workflows | `../docs/superpowers/specs/2026-08-18-tasky-workflows-design.md` | Signed off — **backend implementation next** |
-| 4 — Labels | `../docs/superpowers/specs/2026-08-18-tasky-labels-design.md` | Signed off — **prototype below, backend implementation next** |
+| 3 — Workflows | `../docs/superpowers/specs/2026-08-18-tasky-workflows-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
+| 4 — Labels | `../docs/superpowers/specs/2026-08-18-tasky-labels-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 
-Because sub-projects 1, 2a and 2b already shipped, this prototype's Projects
-& Membership, Board/work-item, and Fields/Screens screens are now mostly a
-faithful *replica* of what's live in production — they exist here so
-sub-project 3's new screens (per-project Statuses, board columns that
-follow them) have somewhere real to hang off, not because that part still
-needs review.
+Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
+is now a faithful *replica* of what's live in production — it exists here as
+the reference implementation the next unreviewed sub-project's new screens
+get built alongside, not because any of it still needs review.
 
 ## Run it
 
