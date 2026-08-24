@@ -229,6 +229,74 @@ def test_bulk_delete_removes_every_item_and_orphans_children(auth_client, projec
 
 
 @pytest.mark.django_db
+def test_bulk_move_appends_to_the_end_of_the_destination_column_in_payload_order(
+    auth_client, project, board, three_items
+):
+    # Regression: bulk-move must set `position`, appending moved items to
+    # the bottom of the destination column in the payload's given order —
+    # same as a single move/ renumbers its destination — not leave them at
+    # the model field's default position=0.
+    target = WorkItemStatus.objects.filter(project=project, category="done").first()
+    pre_existing = [
+        WorkItem.objects.create(board=board, title=f"Pre {i}", status=target, created_by=None, position=i)
+        for i in range(2)
+    ]
+    assert [i.position for i in pre_existing] == [0, 1]
+
+    # three_items are in a different status; move two of them, in a
+    # specific order, into `target`.
+    ordered_ids = [three_items[1].id, three_items[0].id]
+    response = auth_client.post(
+        "/api/work-items/bulk-move/", {"ids": ordered_ids, "status": target.id}, content_type="application/json"
+    )
+    assert response.status_code == 200
+    assert sorted(response.json()["succeeded"]) == sorted(ordered_ids)
+
+    ordered = list(WorkItem.objects.filter(board=board, status=target).order_by("position", "id"))
+    assert [i.id for i in ordered] == [pre_existing[0].id, pre_existing[1].id] + ordered_ids
+    assert [i.position for i in ordered] == [0, 1, 2, 3]
+
+
+@pytest.mark.django_db
+def test_bulk_move_and_bulk_update_bump_updated_at(auth_client, project, board, three_items):
+    original = {item.id: item.updated_at for item in three_items}
+    target = WorkItemStatus.objects.filter(project=project, category="done").first()
+
+    auth_client.post(
+        "/api/work-items/bulk-move/",
+        {"ids": [three_items[0].id], "status": target.id},
+        content_type="application/json",
+    )
+    three_items[0].refresh_from_db()
+    assert three_items[0].updated_at > original[three_items[0].id]
+
+    auth_client.post(
+        "/api/work-items/bulk-update/",
+        {"ids": [three_items[1].id], "priority": 3},
+        content_type="application/json",
+    )
+    three_items[1].refresh_from_db()
+    assert three_items[1].updated_at > original[three_items[1].id]
+
+
+@pytest.mark.django_db
+def test_bulk_update_components_add_with_one_unknown_id_rejects_whole_request(
+    auth_client, project, three_items
+):
+    valid = Component.objects.create(project=project, name="Backend")
+    response = auth_client.post(
+        "/api/work-items/bulk-update/",
+        {"ids": [i.id for i in three_items], "components_add": [valid.id, 999999]},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert "components_add" in response.json()
+    for item in three_items:
+        item.refresh_from_db()
+        assert item.components.count() == 0
+
+
+@pytest.mark.django_db
 def test_bulk_move_non_integer_status_is_rejected_not_a_500(auth_client, project, three_items):
     original_status_id = three_items[0].status_id
     response = auth_client.post(

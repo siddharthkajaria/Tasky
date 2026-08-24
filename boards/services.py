@@ -3,14 +3,20 @@ import datetime
 import io
 import re
 
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Max
+from django.db.utils import DataError
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import Component, CustomField, Label, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
 
-PRIORITY_NAMES = {"low": 1, "medium": 2, "high": 3}
+# Derived from WorkItem.Priority.choices (LOW = 1, "Low" / MEDIUM = 2,
+# "Medium" / HIGH = 3, "High") rather than hand-duplicated, so this can't
+# silently drift from the model's actual priority choices.
+PRIORITY_NAMES = {label.lower(): value for value, label in WorkItem.Priority.choices}
 
 
 def import_work_items_from_csv(board, csv_file, user):
@@ -20,7 +26,12 @@ def import_work_items_from_csv(board, csv_file, user):
     raised before any row is touched — see this plan's Global Constraints."""
     raw = csv_file.read()
     try:
-        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        # "utf-8-sig" strips a leading BOM (U+FEFF) if present — Excel's
+        # "CSV UTF-8" export prepends one, which plain "utf-8" decoding
+        # leaves attached to the first header cell (`'﻿title'`),
+        # making the "title" column look missing even though it's there.
+        # A no-op for files without a BOM, so this is a strict improvement.
+        text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
     except UnicodeDecodeError:
         raise ValidationError({"csv": "CSV file must be UTF-8 encoded."})
     # No blanket "drop any all-blank row" pass here: `csv.reader` already
@@ -38,11 +49,20 @@ def import_work_items_from_csv(board, csv_file, user):
     if "title" not in header:
         raise ValidationError({"csv": 'CSV must include a "title" column.'})
     data_rows = reader[1:]
+    # Strip trailing all-blank rows only — a common CSV-export artifact
+    # (a trailing newline turning into one blank data row) that would
+    # otherwise be reported as a spurious "Title is required." failure and
+    # count toward the 500-row cap. A blank row in the MIDDLE of the file
+    # is left alone: that's the deliberate mid-file blank-title case this
+    # module reports as a real per-row failure (see the comment above).
+    while data_rows and not any(cell.strip() for cell in data_rows[-1]):
+        data_rows.pop()
     if len(data_rows) > 500:
         raise ValidationError({"csv": "CSV has more than 500 rows."})
 
     imported = 0
     failed = []
+    User = get_user_model()
 
     for i, cells in enumerate(data_rows):
         row_num = i + 2  # header is row 1
@@ -64,7 +84,6 @@ def import_work_items_from_csv(board, csv_file, user):
             fail_row(f'Invalid item_type "{item_type}".')
             continue
 
-        status = resolve_default_status(board.project)
         if row.get("status"):
             status = WorkItemStatus.objects.filter(
                 project=board.project, name__iexact=row["status"]
@@ -72,6 +91,12 @@ def import_work_items_from_csv(board, csv_file, user):
             if not status:
                 fail_row(f'Status "{row["status"]}" not found.')
                 continue
+        else:
+            # Only resolved when the row needs it — resolve_default_status()
+            # can seed a project's default statuses as a side effect, which
+            # is wasted work (and an extra query) on every row that already
+            # supplies its own valid status.
+            status = resolve_default_status(board.project)
 
         priority = 2
         if row.get("priority"):
@@ -82,9 +107,6 @@ def import_work_items_from_csv(board, csv_file, user):
 
         assignee = None
         if row.get("assignee"):
-            from django.contrib.auth import get_user_model
-
-            User = get_user_model()
             assignee = User.objects.filter(username__iexact=row["assignee"]).first()
             if not assignee:
                 fail_row(f'User "{row["assignee"]}" not found.')
@@ -118,16 +140,35 @@ def import_work_items_from_csv(board, csv_file, user):
 
         label_names = [n.strip() for n in row.get("labels", "").split(";") if n.strip()]
 
-        item = WorkItem.objects.create(
-            board=board, item_type=item_type, title=title,
-            description=row.get("description", ""), status=status, priority=priority,
-            due_date=due_date, assignee=assignee, created_by=user,
-            position=next_position(board.id, status.id),
-        )
-        if component_ids:
-            item.components.set(component_ids)
-        if label_names:
-            item.labels.set(resolve_labels(label_names, user))
+        # Import never supplies custom field values, but a screen's required
+        # custom field must still be enforced against that — exactly the
+        # same call WorkItemSerializer.validate() makes on create (with an
+        # empty payload, since there's nothing to pass) so a CSV row can't
+        # silently create an item the single-item API would have rejected.
+        custom_error = custom_fields_write_error(board.project, item_type, {}, existing_item=None)
+        if custom_error:
+            if isinstance(custom_error, dict):
+                message = "; ".join(custom_error.values())
+            else:
+                message = custom_error
+            fail_row(message)
+            continue
+
+        try:
+            with transaction.atomic():
+                item = WorkItem.objects.create(
+                    board=board, item_type=item_type, title=title,
+                    description=row.get("description", ""), status=status, priority=priority,
+                    due_date=due_date, assignee=assignee, created_by=user,
+                    position=next_position(board.id, status.id),
+                )
+                if component_ids:
+                    item.components.set(component_ids)
+                if label_names:
+                    item.labels.set(resolve_labels(label_names, user))
+        except (DataError, IntegrityError, DjangoValidationError) as exc:
+            fail_row(f"Could not create this row: {exc}")
+            continue
         imported += 1
 
     return {"imported": imported, "failed": failed}

@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.db import models, transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
@@ -185,12 +186,17 @@ class WorkItemViewSet(viewsets.ModelViewSet):
     def _resolve_batch(self, raw_ids):
         """Returns (existing_items, missing_ids, project) or raises
         ValidationError/PermissionDenied. `existing_items` is a list of
-        WorkItem instances found for the given ids; `missing_ids` is
-        whatever from `raw_ids` didn't resolve to a real row — these are
-        per-id failures, not a whole-request rejection. Every id that DID
-        resolve must belong to the same project, checked before returning,
-        since that's a uniform-failure case (wrong for the whole request),
-        not a per-id one."""
+        WorkItem instances found for the given ids, IN THE SAME ORDER AS
+        `raw_ids` (deduplicated) — not the queryset's default ordering
+        (WorkItem.Meta.ordering = ["position", "id"]), which is unrelated to
+        payload order and would silently discard it. bulk_move relies on
+        this to append moved items to their destination column in the
+        order the caller gave, so this ordering is load-bearing, not
+        cosmetic. `missing_ids` is whatever from `raw_ids` didn't resolve to
+        a real row — these are per-id failures, not a whole-request
+        rejection. Every id that DID resolve must belong to the same
+        project, checked before returning, since that's a uniform-failure
+        case (wrong for the whole request), not a per-id one."""
         if not raw_ids or not isinstance(raw_ids, list):
             raise ValidationError({"ids": "Provide a non-empty list of ids."})
         if len(raw_ids) > 200:
@@ -201,21 +207,24 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"ids": "Every id must be an integer."})
 
-        existing = list(
-            WorkItem.objects.filter(id__in=ids).select_related("board__project")
-        )
-        if not existing:
+        by_id = {
+            item.id: item
+            for item in WorkItem.objects.filter(id__in=ids).select_related("board__project")
+        }
+        if not by_id:
             raise ValidationError({"ids": "None of these ids exist."})
 
-        project_ids = {item.board.project_id for item in existing}
+        project_ids = {item.board.project_id for item in by_id.values()}
         if len(project_ids) > 1:
             raise ValidationError({"ids": "All ids must belong to work items in the same project."})
 
-        project = existing[0].board.project
+        project = next(iter(by_id.values())).board.project
         self.check_object_permissions(self.request, project)
 
-        found_ids = {item.id for item in existing}
-        missing_ids = [i for i in ids if i not in found_ids]
+        seen = set()
+        deduped_ids = [i for i in ids if not (i in seen or seen.add(i))]
+        existing = [by_id[i] for i in deduped_ids if i in by_id]
+        missing_ids = [i for i in deduped_ids if i not in by_id]
         return existing, missing_ids, project
 
     @action(detail=False, methods=["post"], url_path="bulk-move")
@@ -235,7 +244,15 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         succeeded = []
         for item in items:
             item.status = target_status
-            item.save(update_fields=["status"])
+            # Appends to the end of the destination column, in payload
+            # order, same as a single move/ does. next_position() is
+            # deliberately unlocked (see its docstring in services.py) —
+            # called once per item, sequentially, with each item's save()
+            # completing before the next iteration's call, so each item in
+            # this batch still gets a strictly increasing position in
+            # payload order within its own (board, status) column.
+            item.position = next_position(item.board_id, target_status.id)
+            item.save(update_fields=["status", "position", "updated_at"])
             succeeded.append(item.id)
         failed = [{"id": i, "error": "Not found."} for i in missing_ids]
         return Response({"succeeded": succeeded, "failed": failed})
@@ -245,16 +262,15 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         data = request.data
         items, missing_ids, project = self._resolve_batch(data.get("ids"))
 
+        User = get_user_model()
+
         assignee = None
         if "assignee" in data and data["assignee"] is not None:
-            from django.contrib.auth import get_user_model
-
             try:
                 assignee_id = int(data["assignee"])
             except (TypeError, ValueError):
                 raise ValidationError({"assignee": "Must be an integer."})
 
-            User = get_user_model()
             assignee = User.objects.filter(pk=assignee_id).first()
             if not assignee:
                 raise ValidationError({"assignee": "User not found."})
@@ -275,6 +291,9 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             except (TypeError, ValueError):
                 raise ValidationError({"components_add": "Every id must be an integer."})
             components_add = list(Component.objects.filter(id__in=component_ids))
+            found_component_ids = {c.id for c in components_add}
+            if any(i not in found_component_ids for i in component_ids):
+                raise ValidationError({"components_add": "Component not found."})
             mismatched = [c for c in components_add if c.project_id != project.id]
             if mismatched:
                 raise ValidationError({"components_add": "Components must belong to this item's project."})
@@ -294,6 +313,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
                 item.priority = priority
                 update_fields.append("priority")
             if update_fields:
+                update_fields.append("updated_at")
                 item.save(update_fields=update_fields)
             if resolved_labels:
                 item.labels.add(*resolved_labels)

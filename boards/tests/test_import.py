@@ -2,7 +2,17 @@ import io
 
 import pytest
 
-from boards.models import Board, Component, Label, WorkItem, WorkItemStatus
+from boards.models import (
+    Board,
+    Component,
+    CustomField,
+    Label,
+    ProjectScreenAssignment,
+    Screen,
+    ScreenField,
+    WorkItem,
+    WorkItemStatus,
+)
 from boards.services import seed_default_statuses
 
 
@@ -195,3 +205,90 @@ def test_imported_items_append_to_the_end_of_their_column_not_position_zero(auth
     )
     assert [i.title for i in ordered] == ["Pre-existing", "A", "B"]
     assert [i.position for i in ordered] == [0, 1, 2]
+
+
+@pytest.mark.django_db
+def test_a_leading_utf8_bom_does_not_hide_the_title_column(auth_client, board):
+    # Regression: Excel's "CSV UTF-8" export prepends a BOM (U+FEFF) before
+    # the header row. Decoding with plain "utf-8" leaves it stuck to the
+    # first header cell ('﻿title'), so the "title" column looks
+    # missing even though it's plainly there, and the whole file is
+    # falsely rejected.
+    raw = b"\xef\xbb\xbftitle\nFirst item"
+    response = auth_client.post(
+        f"/api/boards/{board.id}/import/", {"csv": io.BytesIO(raw)}, format="multipart"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported"] == 1
+    assert body["failed"] == []
+    assert WorkItem.objects.filter(board=board, title="First item").exists()
+
+
+@pytest.mark.django_db
+def test_a_row_missing_a_required_custom_field_fails_that_row_only(auth_client, project, board):
+    # Regression: import never supplies custom field values, but a screen's
+    # required custom field must still be enforced — the single-item create
+    # API (WorkItemSerializer.validate()) already rejects a create that
+    # omits a required field entirely, and import was silently bypassing
+    # that check.
+    field = CustomField.objects.create(name="Story Points", field_type="number")
+    screen = Screen.objects.create(name="Task Screen")
+    ScreenField.objects.create(screen=screen, field=field, required=True)
+    ProjectScreenAssignment.objects.create(project=project, item_type="task", screen=screen)
+
+    csv = "title,item_type\nNeeds points,task\nNo screen assigned,bug"
+    response = auth_client.post(f"/api/boards/{board.id}/import/", {"csv": csv_file(csv)}, format="multipart")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["imported"] == 1
+    assert WorkItem.objects.filter(board=board, title="No screen assigned").exists()
+    assert not WorkItem.objects.filter(board=board, title="Needs points").exists()
+
+    assert len(body["failed"]) == 1
+    failure = body["failed"][0]
+    assert failure["title"] == "Needs points"
+    assert "Story Points" in failure["error"]
+
+
+@pytest.mark.django_db
+def test_a_row_that_violates_a_db_constraint_fails_that_row_not_a_500(auth_client, board):
+    # Regression: a title longer than the column's max_length used to
+    # propagate as an uncaught DataError (500) mid-file, leaving every row
+    # imported before the crash committed with no failure report at all.
+    too_long_title = "X" * 201
+    csv = f"title\n{too_long_title}\nA valid row"
+    response = auth_client.post(f"/api/boards/{board.id}/import/", {"csv": csv_file(csv)}, format="multipart")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["imported"] == 1
+    assert WorkItem.objects.filter(board=board, title="A valid row").exists()
+    assert not WorkItem.objects.filter(board=board, title=too_long_title).exists()
+
+    assert len(body["failed"]) == 1
+    assert body["failed"][0]["row"] == 2
+
+
+@pytest.mark.django_db
+def test_a_trailing_blank_line_imports_cleanly_with_no_spurious_failure(auth_client, board):
+    # The trailing "\n\n" is what actually produces a genuine blank data
+    # row via csv.reader (a single trailing "\n" does not) — a common
+    # CSV-export artifact.
+    csv = "title\nFirst item\nSecond item\n\n"
+    response = auth_client.post(f"/api/boards/{board.id}/import/", {"csv": csv_file(csv)}, format="multipart")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported"] == 2
+    assert body["failed"] == []
+
+
+@pytest.mark.django_db
+def test_500_real_rows_plus_a_trailing_blank_line_still_imports(auth_client, board):
+    csv = "title\n" + "\n".join(f"Item {i}" for i in range(500)) + "\n\n"
+    response = auth_client.post(f"/api/boards/{board.id}/import/", {"csv": csv_file(csv)}, format="multipart")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["imported"] == 500
+    assert body["failed"] == []
