@@ -99,6 +99,43 @@ Work item responses also carry read-only extras beyond the writable fields above
 
 **`position` is not a system-wide contiguous `0..n-1` invariant** — it is only guaranteed to give a column a deterministic total order (ties broken by `id`), and it is renormalised to a clean `0..n-1` at the moment `/move/` renumbers that column. Deleting a work item, for instance, does **not** renumber anything afterward, so gaps (`0, 2, 3`, say) are expected and harmless — never treat a gap as a sign of corrupted data, and never rely on `position` values being consecutive.
 
+## Bulk Operations & Import
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/work-items/bulk-move/` | `{ids: [...], status: <WorkItemStatus id>}` — moves every id straight to that status |
+| POST | `/api/work-items/bulk-update/` | `{ids: [...], assignee?, priority?, components_add?, labels_add?}` |
+| POST | `/api/work-items/bulk-delete/` | `{ids: [...]}` |
+| POST | `/api/boards/{id}/import/` | multipart `{csv: <file>}` — creates work items from a CSV, best-effort per row |
+
+**The three `/api/work-items/bulk-*/` endpoints all take `{ids: [...]}`, and all three are best-effort, not all-or-nothing:** an id that doesn't resolve to a real work item is reported per-id in the response's `failed` list rather than rejecting the whole request, and every other id in the same request is still processed. `ids` must be a non-empty list of at most 200 integers, or the whole request 400s before anything is touched (`{"ids": "Provide a non-empty list of ids."}` / `"No more than 200 ids per request."` / `"Every id must be an integer."`); if every id given is nonexistent (none resolve), the whole request also 400s (`{"ids": "None of these ids exist."}`) rather than returning an all-failed 200. Every id that *does* resolve must belong to work items in the *same* project — mixing ids from two different projects in one request 400s the whole thing (`{"ids": "All ids must belong to work items in the same project."}`); membership in that one project is what `IsProjectMember` checks (a non-member gets `403`). An id that resolves but the row-level operation still can't apply to (e.g. `bulk-move` given a `status` from a different project) 400s the *whole* request, the same as `/api/work-items/{id}/move/` does — that's a uniform problem, not a per-id one.
+
+`POST /api/work-items/bulk-move/` sets `status` directly on every resolved item — **unlike `/api/work-items/{id}/move/`, it does *not* renumber any column's `position`.** There is no `position` in the request body at all. A client that needs items to land at a specific position within their new column still has to use `/move/` for that one item; `bulk-move` is for "move all of these to this column, order doesn't matter." Response: `{"succeeded": [<ids moved>], "failed": [{"id": <id>, "error": "Not found."}]}`.
+
+`POST /api/work-items/bulk-update/` applies whichever of `assignee`, `priority`, `components_add`, `labels_add` are present in the body to every resolved item — any field left out of the body is left untouched on every item (same "only touch what's named" rule `PATCH /api/work-items/{id}/` already follows). `assignee` accepts a user id or `null` (to unassign); an unknown id 400s the whole request (`{"assignee": "User not found."}`). `priority` must be `1`, `2`, or `3`. `components_add` and `labels_add` are additive only — items keep whichever components/labels they already had, plus these; there is no `components_remove`/`labels_remove`. `components_add` takes ids and 400s the whole request if any component belongs to a different project (`{"components_add": "Components must belong to this item's project."}`); `labels_add` takes label *names*, resolved/created exactly like `labels` on `/api/work-items/{id}/` does, and a blank name 400s the whole request the same way. Response: `{"succeeded": [<ids updated>], "failed": [{"id": <id>, "error": "Not found."}]}`.
+
+`POST /api/work-items/bulk-delete/` deletes every resolved item outright. Any work item that had one of the deleted items as its `parent` has that `parent` cleared first (same as deleting a single work item does) rather than being deleted itself. Response: `{"deleted": [<ids deleted>], "failed": [{"id": <id>, "error": "Not found."}]}`.
+
+**`POST /api/boards/{id}/import/` creates work items on that board from an uploaded CSV**, `multipart/form-data` with the file under the `csv` field. Like the three bulk endpoints above, it's best-effort per row, not all-or-nothing — but the split between "whole-file problem" and "per-row problem" is different, since a CSV can be malformed in ways a list of ids can't be:
+
+- **Whole-file problems 400 before any row is touched:** an empty upload (`{"csv": "CSV file is empty."}`), a file that isn't UTF-8 text (`{"csv": "CSV file must be UTF-8 encoded."}`), a missing `title` column (`{"csv": "CSV must include a \"title\" column."}`), or more than 500 data rows (`{"csv": "CSV has more than 500 rows."}`).
+- **Per-row problems are skipped and reported**, and the rest of the file still imports. Response: `{"imported": <count>, "failed": [{"row": <line number, header is row 1>, "title": <that row's title, or null if blank>, "error": <message>}, ...]}`.
+
+Only `title` is required; every other column is optional and, when the header row doesn't include it at all, behaves exactly as if every row left it blank. Column reference:
+
+| Column | Behavior |
+|---|---|
+| `title` | Required. A blank title fails just that row (`"Title is required."`) — the file's other rows still import. |
+| `item_type` | One of `epic`, `story`, `task`, `bug`; defaults to `task`. `subtask` is rejected (`"Subtasks cannot be imported (need a parent)."`) since a subtask needs a `parent` and CSV import has no way to express one; any other value fails the row (`'Invalid item_type "<value>".'`). |
+| `description` | Free text; blank is fine. |
+| `status` | Matched case-insensitively by name against this board's project's statuses; defaults to the project's default `todo`-category status when omitted. A name that doesn't match any status in the project fails the row (`'Status "<value>" not found.'`). |
+| `priority` | One of `low`, `medium`, `high` (case-insensitive); defaults to `medium`. Anything else fails the row (`'Invalid priority "<value>".'`). |
+| `assignee` | Matched case-insensitively by `username`; a name that doesn't match any user fails the row (`'User "<value>" not found.'`). |
+| `due_date` | `YYYY-MM-DD`; a value that isn't shape-valid *or* isn't a real calendar date (e.g. `2026-13-01`) fails the row (`'Invalid due_date "<value>".'`). |
+| `labels` | `;`-separated label names, resolved/created exactly like `labels` on `/api/work-items/{id}/` — a brand-new name invents a `Label` on the spot. |
+| `components` | `;`-separated component names, matched case-insensitively against this board's project's components. A name that doesn't match fails the row (`'Component "<value>" not found.'`); this is the one difference from `labels` — a bad component name fails the row instead of being invented. |
+
+Imported work items go through the same `key`-generation and default-`position` path every other work item creation does — there's nothing import-specific about how a resulting row is numbered or placed in its column.
+
 ## Components
 | Method | Path | Notes |
 |---|---|---|

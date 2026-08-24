@@ -1,4 +1,6 @@
+import csv as csv_module
 import datetime
+import io
 import re
 
 from django.db import IntegrityError, transaction
@@ -6,7 +8,129 @@ from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import CustomField, Label, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
+from .models import Component, CustomField, Label, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
+
+PRIORITY_NAMES = {"low": 1, "medium": 2, "high": 3}
+
+
+def import_work_items_from_csv(board, csv_file, user):
+    """Row-by-row, best-effort: a bad row is skipped and reported, the
+    rest of the file still imports. A uniform problem (missing `title`
+    header, more than 500 rows) is a whole-file ValidationError instead,
+    raised before any row is touched — see this plan's Global Constraints."""
+    raw = csv_file.read()
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    except UnicodeDecodeError:
+        raise ValidationError({"csv": "CSV file must be UTF-8 encoded."})
+    # No blanket "drop any all-blank row" pass here: `csv.reader` already
+    # yields zero rows for a genuinely empty file (`if not reader` below
+    # catches that), and a row that's blank because ITS title is blank is
+    # exactly the per-row failure `test_a_blank_title_row_fails_without_
+    # blocking_the_rest` exercises — dropping it here would silently lose
+    # it instead of reporting it, and would also throw off `row_num`
+    # (computed from `data_rows`' own index) for every row after it.
+    reader = list(csv_module.reader(io.StringIO(text)))
+    if not reader:
+        raise ValidationError({"csv": "CSV file is empty."})
+
+    header = [h.strip().lower() for h in reader[0]]
+    if "title" not in header:
+        raise ValidationError({"csv": 'CSV must include a "title" column.'})
+    data_rows = reader[1:]
+    if len(data_rows) > 500:
+        raise ValidationError({"csv": "CSV has more than 500 rows."})
+
+    imported = 0
+    failed = []
+
+    for i, cells in enumerate(data_rows):
+        row_num = i + 2  # header is row 1
+        row = {h: (cells[idx].strip() if idx < len(cells) else "") for idx, h in enumerate(header)}
+        title = row.get("title", "")
+
+        def fail_row(error, title=title):
+            failed.append({"row": row_num, "title": title or None, "error": error})
+
+        if not title:
+            fail_row("Title is required.")
+            continue
+
+        item_type = (row.get("item_type") or "task").lower()
+        if item_type == "subtask":
+            fail_row("Subtasks cannot be imported (need a parent).")
+            continue
+        if item_type not in WorkItem.ItemType.values:
+            fail_row(f'Invalid item_type "{item_type}".')
+            continue
+
+        status = resolve_default_status(board.project)
+        if row.get("status"):
+            status = WorkItemStatus.objects.filter(
+                project=board.project, name__iexact=row["status"]
+            ).first()
+            if not status:
+                fail_row(f'Status "{row["status"]}" not found.')
+                continue
+
+        priority = 2
+        if row.get("priority"):
+            priority = PRIORITY_NAMES.get(row["priority"].lower())
+            if not priority:
+                fail_row(f'Invalid priority "{row["priority"]}".')
+                continue
+
+        assignee = None
+        if row.get("assignee"):
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            assignee = User.objects.filter(username__iexact=row["assignee"]).first()
+            if not assignee:
+                fail_row(f'User "{row["assignee"]}" not found.')
+                continue
+
+        due_date = None
+        if row.get("due_date"):
+            # Regex alone would pass a calendar-invalid string like
+            # "2026-13-01" through to WorkItem.objects.create(), where
+            # Django's DateField.to_python() raises its own (uncaught,
+            # non-DRF) ValidationError while preparing the INSERT —
+            # surfacing as an unhandled 500 instead of a per-row failure.
+            # _is_iso_date (below) checks real calendar validity too.
+            if not _is_iso_date(row["due_date"]):
+                fail_row(f'Invalid due_date "{row["due_date"]}".')
+                continue
+            due_date = row["due_date"]
+
+        component_ids = []
+        bad_component = None
+        if row.get("components"):
+            for name in [n.strip() for n in row["components"].split(";") if n.strip()]:
+                comp = Component.objects.filter(project=board.project, name__iexact=name).first()
+                if not comp:
+                    bad_component = name
+                    break
+                component_ids.append(comp.id)
+        if bad_component:
+            fail_row(f'Component "{bad_component}" not found.')
+            continue
+
+        label_names = [n.strip() for n in row.get("labels", "").split(";") if n.strip()]
+
+        item = WorkItem.objects.create(
+            board=board, item_type=item_type, title=title,
+            description=row.get("description", ""), status=status, priority=priority,
+            due_date=due_date, assignee=assignee, created_by=user,
+        )
+        if component_ids:
+            item.components.set(component_ids)
+        if label_names:
+            item.labels.set(resolve_labels(label_names, user))
+        imported += 1
+
+    return {"imported": imported, "failed": failed}
+
 
 _DEFAULT_STATUSES = [("To Do", "todo", 0), ("In Progress", "in_progress", 1), ("Done", "done", 2)]
 

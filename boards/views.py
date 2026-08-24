@@ -4,6 +4,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,7 +32,7 @@ from .serializers import (
     can_manage_screen_assignments,
     user_can_manage_definitions,
 )
-from .services import move_work_item, next_position, resolve_labels
+from .services import import_work_items_from_csv, move_work_item, next_position, resolve_labels
 
 
 class BoardViewSet(viewsets.ModelViewSet):
@@ -71,6 +72,15 @@ class BoardViewSet(viewsets.ModelViewSet):
             "assignee", "created_by", "parent", "parent__status", "status"
         ).prefetch_related("components", "labels", "field_values__field")
         return Response(WorkItemSerializer(items, many=True).data)
+
+    @action(detail=True, methods=["post"], url_path="import", parser_classes=[MultiPartParser])
+    def import_csv(self, request, pk=None):
+        board = self.get_object()
+        csv_file = request.FILES.get("csv")
+        if not csv_file:
+            raise ValidationError({"csv": "This field is required."})
+        result = import_work_items_from_csv(board, csv_file, request.user)
+        return Response(result)
 
 
 class WorkItemViewSet(viewsets.ModelViewSet):
