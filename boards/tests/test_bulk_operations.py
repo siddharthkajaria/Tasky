@@ -226,3 +226,67 @@ def test_bulk_delete_removes_every_item_and_orphans_children(auth_client, projec
     assert not WorkItem.objects.filter(id=three_items[0].id).exists()
     child.refresh_from_db()
     assert child.parent_id is None
+
+
+@pytest.mark.django_db
+def test_bulk_move_non_integer_status_is_rejected_not_a_500(auth_client, project, three_items):
+    original_status_id = three_items[0].status_id
+    response = auth_client.post(
+        "/api/work-items/bulk-move/",
+        {"ids": [three_items[0].id], "status": "abc"},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    three_items[0].refresh_from_db()
+    assert three_items[0].status_id == original_status_id
+
+
+@pytest.mark.django_db
+def test_bulk_update_non_integer_assignee_is_rejected_not_a_500(auth_client, project, three_items):
+    response = auth_client.post(
+        "/api/work-items/bulk-update/",
+        {"ids": [three_items[0].id], "assignee": "abc"},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    three_items[0].refresh_from_db()
+    assert three_items[0].assignee_id is None
+
+
+@pytest.mark.django_db
+def test_bulk_update_non_integer_priority_is_rejected_not_a_500(auth_client, project, three_items):
+    original_priority = three_items[0].priority
+    response = auth_client.post(
+        "/api/work-items/bulk-update/",
+        {"ids": [three_items[0].id], "priority": "abc"},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    three_items[0].refresh_from_db()
+    assert three_items[0].priority == original_priority
+
+
+@pytest.mark.django_db
+def test_bulk_update_non_integer_components_add_is_rejected_not_a_500(auth_client, project, three_items):
+    response = auth_client.post(
+        "/api/work-items/bulk-update/",
+        {"ids": [three_items[0].id], "components_add": ["abc"]},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    three_items[0].refresh_from_db()
+    assert three_items[0].components.count() == 0
+
+
+@pytest.mark.django_db
+def test_bulk_update_labels_add_blank_name_rejects_whole_request(auth_client, project, three_items):
+    response = auth_client.post(
+        "/api/work-items/bulk-update/",
+        {"ids": [i.id for i in three_items], "labels_add": [""]},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert not Label.objects.filter(name="").exists()
+    for item in three_items:
+        item.refresh_from_db()
+        assert item.labels.count() == 0

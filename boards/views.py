@@ -213,6 +213,11 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         status_id = request.data.get("status")
         items, missing_ids, project = self._resolve_batch(request.data.get("ids"))
 
+        try:
+            status_id = int(status_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"status": "Must be an integer."})
+
         target_status = WorkItemStatus.objects.filter(pk=status_id).first()
         if not target_status or target_status.project_id != project.id:
             raise ValidationError({"status": "Status must belong to this item's project."})
@@ -234,23 +239,39 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         if "assignee" in data and data["assignee"] is not None:
             from django.contrib.auth import get_user_model
 
+            try:
+                assignee_id = int(data["assignee"])
+            except (TypeError, ValueError):
+                raise ValidationError({"assignee": "Must be an integer."})
+
             User = get_user_model()
-            assignee = User.objects.filter(pk=data["assignee"]).first()
+            assignee = User.objects.filter(pk=assignee_id).first()
             if not assignee:
                 raise ValidationError({"assignee": "User not found."})
 
         priority = data.get("priority")
-        if priority is not None and int(priority) not in (1, 2, 3):
-            raise ValidationError({"priority": "Must be 1, 2, or 3."})
+        if priority is not None:
+            try:
+                priority = int(priority)
+            except (TypeError, ValueError):
+                raise ValidationError({"priority": "Must be 1, 2, or 3."})
+            if priority not in (1, 2, 3):
+                raise ValidationError({"priority": "Must be 1, 2, or 3."})
 
         components_add = []
         if data.get("components_add"):
-            components_add = list(Component.objects.filter(id__in=data["components_add"]))
+            try:
+                component_ids = [int(i) for i in data["components_add"]]
+            except (TypeError, ValueError):
+                raise ValidationError({"components_add": "Every id must be an integer."})
+            components_add = list(Component.objects.filter(id__in=component_ids))
             mismatched = [c for c in components_add if c.project_id != project.id]
             if mismatched:
                 raise ValidationError({"components_add": "Components must belong to this item's project."})
 
         labels_add = data.get("labels_add") or []
+        if any(not name.strip() for name in labels_add):
+            raise ValidationError({"labels_add": "A label name can't be blank."})
         resolved_labels = resolve_labels(labels_add, request.user) if labels_add else []
 
         succeeded = []
@@ -260,7 +281,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
                 item.assignee = assignee
                 update_fields.append("assignee")
             if priority is not None:
-                item.priority = int(priority)
+                item.priority = priority
                 update_fields.append("priority")
             if update_fields:
                 item.save(update_fields=update_fields)
