@@ -58,6 +58,7 @@ class WorkItem(models.Model):
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children"
     )
     components = models.ManyToManyField("Component", blank=True, related_name="work_items")
+    labels = models.ManyToManyField("Label", blank=True, related_name="work_items")
     position = models.IntegerField(default=0)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

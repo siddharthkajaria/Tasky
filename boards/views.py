@@ -69,7 +69,7 @@ class BoardViewSet(viewsets.ModelViewSet):
         board = self.get_object()
         items = board.work_items.select_related(
             "assignee", "created_by", "parent", "parent__status", "status"
-        ).prefetch_related("components", "field_values__field")
+        ).prefetch_related("components", "labels", "field_values__field")
         return Response(WorkItemSerializer(items, many=True).data)
 
 
@@ -81,7 +81,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = WorkItem.objects.select_related(
             "board__project", "assignee", "created_by", "parent", "parent__status", "status"
-        ).prefetch_related("components", "field_values__field")
+        ).prefetch_related("components", "labels", "field_values__field")
         if self.action == "list":
             qs = qs.filter(
                 board__project_id__in=ProjectMembership.objects.filter(

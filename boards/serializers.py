@@ -3,7 +3,7 @@ from rest_framework import serializers
 from accounts.serializers import UserSerializer
 
 from .models import Board, Comment, Component, CustomField, FieldOption, Label, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
-from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status
+from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status, resolve_labels
 
 VALID_PARENT_TYPES = {
     WorkItem.ItemType.EPIC: [],
@@ -209,6 +209,8 @@ class WorkItemSerializer(serializers.ModelSerializer):
     priority_label = serializers.CharField(source="get_priority_display", read_only=True)
     parent_detail = WorkItemSummarySerializer(source="parent", read_only=True)
     components_detail = ComponentSerializer(source="components", many=True, read_only=True)
+    labels = serializers.ListField(child=serializers.CharField(), required=False, write_only=True)
+    labels_detail = LabelSummarySerializer(source="labels", many=True, read_only=True)
     status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
     status = serializers.PrimaryKeyRelatedField(queryset=WorkItemStatus.objects.all(), required=False)
     custom_fields = serializers.DictField(required=False, write_only=True)
@@ -219,7 +221,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
             "id", "key", "board", "item_type", "title", "description",
             "status", "status_detail", "priority", "priority_label", "due_date",
             "assignee", "assignee_detail", "parent", "parent_detail",
-            "components", "components_detail", "custom_fields",
+            "components", "components_detail", "labels", "labels_detail", "custom_fields",
             "position", "created_by", "created_at", "updated_at",
         ]
         read_only_fields = ["key", "position"]
@@ -266,6 +268,10 @@ class WorkItemSerializer(serializers.ModelSerializer):
                     {"components": "Components must belong to this item's project."}
                 )
 
+        if "labels" in attrs:
+            if any(not name.strip() for name in attrs["labels"]):
+                raise serializers.ValidationError({"labels": "A label name can't be blank."})
+
         board = attrs.get("board") or (self.instance.board if self.instance else None)
         if "status" in attrs:
             if attrs["status"].project_id != board.project_id:
@@ -300,16 +306,22 @@ class WorkItemSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         custom_fields = validated_data.pop("custom_fields", None)
+        label_names = validated_data.pop("labels", None)
         instance = super().create(validated_data)
         if custom_fields:
             apply_custom_fields(instance, custom_fields)
+        if label_names is not None:
+            instance.labels.set(resolve_labels(label_names))
         return instance
 
     def update(self, instance, validated_data):
         custom_fields = validated_data.pop("custom_fields", None)
+        label_names = validated_data.pop("labels", None)
         instance = super().update(instance, validated_data)
         if custom_fields is not None:
             apply_custom_fields(instance, custom_fields)
+        if label_names is not None:
+            instance.labels.set(resolve_labels(label_names))
         return instance
 
     def to_representation(self, instance):

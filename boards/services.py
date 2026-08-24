@@ -6,7 +6,7 @@ from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import CustomField, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
+from .models import CustomField, Label, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
 
 _DEFAULT_STATUSES = [("To Do", "todo", 0), ("In Progress", "in_progress", 1), ("Done", "done", 2)]
 
@@ -14,6 +14,42 @@ LABEL_PALETTE = [
     "#6E4FA3", "#2E7D5B", "#3B3F8F", "#A32218",
     "#B8860B", "#1F7A8C", "#C2447A", "#5B7B29",
 ]
+
+
+def label_color_for(name: str) -> str:
+    """Deterministic — the same name always resolves to the same palette
+    color, including after a delete-and-recreate. Mirrors
+    design/js/store.js's hashLabelColor exactly (32-bit unsigned overflow,
+    replicated here with an explicit mask since Python ints don't wrap),
+    so the prototype and the real API render the same color for the same
+    name."""
+    digest = 0
+    for ch in name:
+        digest = (digest * 31 + ord(ch)) & 0xFFFFFFFF
+    return LABEL_PALETTE[digest % len(LABEL_PALETTE)]
+
+
+def resolve_labels(names):
+    """Case-insensitive match-or-create against `Label`, in one
+    transaction — a work item write can create a brand-new Label and reuse
+    an existing one in the same request. Mirrors design/js/store.js's
+    findOrCreateLabel/resolveLabelIds, except this assumes every name in
+    `names` has already been validated non-blank (WorkItemSerializer.validate()
+    does that, and 400s before this ever runs) — the prototype's mock
+    instead drops a blank silently, which this deliberately does not
+    replicate; see this plan's Global Constraints."""
+    resolved = []
+    seen_ids = set()
+    with transaction.atomic():
+        for raw in names:
+            clean = raw.strip()
+            label = Label.objects.filter(name__iexact=clean).first()
+            if label is None:
+                label = Label.objects.create(name=clean, color=label_color_for(clean), created_by=None)
+            if label.id not in seen_ids:
+                seen_ids.add(label.id)
+                resolved.append(label)
+    return resolved
 
 
 def seed_default_statuses(project) -> dict:

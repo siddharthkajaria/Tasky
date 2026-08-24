@@ -74,7 +74,7 @@ other removal).
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/work-items/` | every work item on a board in a project I'm a member of |
-| POST | `/api/work-items/` | `{board, item_type, title, description?, status?, priority?, due_date?, assignee?, parent?, components?}` |
+| POST | `/api/work-items/` | `{board, item_type, title, description?, status?, priority?, due_date?, assignee?, parent?, components?, labels?}` |
 | GET/PUT/PATCH/DELETE | `/api/work-items/{id}/` | `key`, `item_type`, `position` are immutable; `status`/`board` unchanged from before |
 | POST | `/api/work-items/{id}/move/` | **breaking change:** `status` is now a `WorkItemStatus` id, not a string; see note below |
 | GET | `/api/boards/{id}/work-items/` | every work item on that board |
@@ -93,7 +93,9 @@ other removal).
 
 **`board` cannot be changed via `PATCH`/`PUT` on `/api/work-items/{id}/` either, for the same reason.** Work items do not move between boards in this product at all — a request whose `board` differs from the work item's current board is rejected with 400: `{"board": "Work items cannot be moved between boards."}`. As with `status`, a `PATCH` that echoes back the work item's current, unchanged `board` alongside other real edits is accepted.
 
-Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `status_detail` (a nested `{id, name, category}` object for the current `status`, returned alongside the raw `status` id), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), and `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
+Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `status_detail` (a nested `{id, name, category}` object for the current `status`, returned alongside the raw `status` id), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list), and `labels_detail` (the full nested `{id, name, color}` `Label` objects for the current `labels`). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
+
+**`labels` is the one field on this endpoint that differs from every other tagging mechanism here: it's write-only and takes label *names* (strings), not ids.** `POST`/`PATCH` `{"labels": ["urgent", "needs-design"]}` resolves each name case-insensitively against the existing `Label` table — a name that already exists (in any case) reuses that row, and a name that doesn't exist yet is created on the spot with a deterministically-hashed color from the same 8-color palette `/api/labels/` uses. Two names in the same write that differ only by case collapse to a single label. A blank/whitespace-only name is rejected with `400: {"labels": "A label name can't be blank."}` and the whole write fails — no work item or label is created. `PATCH` **replaces** the full label set; omitting `labels` from a `PATCH` leaves the work item's existing labels untouched. Applying or inventing a label this way needs only ordinary work-item edit permission (project membership) — no Owner check, unlike renaming/recoloring/deleting a `Label` row directly via `/api/labels/{id}/` (see Labels, below).
 
 **`position` is not a system-wide contiguous `0..n-1` invariant** — it is only guaranteed to give a column a deterministic total order (ties broken by `id`), and it is renormalised to a clean `0..n-1` at the moment `/move/` renumbers that column. Deleting a work item, for instance, does **not** renumber anything afterward, so gaps (`0, 2, 3`, say) are expected and harmless — never treat a gap as a sign of corrupted data, and never rely on `position` values being consecutive.
 
@@ -104,6 +106,20 @@ Work item responses also carry read-only extras beyond the writable fields above
 | PATCH/DELETE | `/api/projects/{id}/components/{id}/` | Owner/Admin only |
 
 Any project member can apply an existing component to a work item via `PATCH /api/work-items/{id}/ {"components": [...]}"` — a component from a different project than the work item's is rejected with `400`.
+
+## Labels
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/labels/` | all labels in the system; unpaginated |
+| GET/PATCH/DELETE | `/api/labels/{id}/` | PATCH accepts `{name, color}`; DELETE has no guard — see below |
+
+**There is no `POST /api/labels/`.** Labels are created only implicitly, by naming a new label string in a work item write (see `labels` on `/api/work-items/` above). There is no separate endpoint for inventing one ahead of time.
+
+Labels are global, not scoped to a project — the same `Label` row is shared and reused by every project. `name` is unique (case-insensitive); `color` must be one of the 8 hex colors in the fixed palette. `PATCH` re-validates both the same way: a duplicate `name` (case-insensitive, excluding this row) or a `color` outside the palette is rejected with `400`.
+
+**Governance is split, deliberately, from ordinary label use:** any project member can apply an existing label or invent a brand-new one on a work item (see `labels` on `/api/work-items/` above) — that needs only ordinary work-item edit permission. Renaming, recoloring, or deleting the `Label` row itself is a wider-blast-radius action (it affects every work item using that label, across every project) and is gated separately: the caller must be an Owner of *some* project, not necessarily one connected to the label. A non-Owner gets `403`.
+
+**`DELETE /api/labels/{id}/` has no guard against the label still being in use.** Unlike deleting a `CustomField` still assigned to a screen (rejected with 400) or a `WorkItemStatus` still in use by a work item (rejected with 400), deleting a `Label` always succeeds and silently unassigns it from every work item that had it — the work items themselves are untouched, only their `labels` set shrinks.
 
 ## Work Item Statuses
 | Method | Path | Notes |
