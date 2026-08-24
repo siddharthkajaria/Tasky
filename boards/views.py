@@ -31,7 +31,7 @@ from .serializers import (
     can_manage_screen_assignments,
     user_can_manage_definitions,
 )
-from .services import move_work_item, next_position
+from .services import move_work_item, next_position, resolve_labels
 
 
 class BoardViewSet(viewsets.ModelViewSet):
@@ -171,6 +171,118 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             raise Http404("Work item was deleted before the move could be applied.")
         item.refresh_from_db()
         return Response(WorkItemSerializer(item).data)
+
+    def _resolve_batch(self, raw_ids):
+        """Returns (existing_items, missing_ids, project) or raises
+        ValidationError/PermissionDenied. `existing_items` is a list of
+        WorkItem instances found for the given ids; `missing_ids` is
+        whatever from `raw_ids` didn't resolve to a real row — these are
+        per-id failures, not a whole-request rejection. Every id that DID
+        resolve must belong to the same project, checked before returning,
+        since that's a uniform-failure case (wrong for the whole request),
+        not a per-id one."""
+        if not raw_ids or not isinstance(raw_ids, list):
+            raise ValidationError({"ids": "Provide a non-empty list of ids."})
+        if len(raw_ids) > 200:
+            raise ValidationError({"ids": "No more than 200 ids per request."})
+
+        try:
+            ids = [int(i) for i in raw_ids]
+        except (TypeError, ValueError):
+            raise ValidationError({"ids": "Every id must be an integer."})
+
+        existing = list(
+            WorkItem.objects.filter(id__in=ids).select_related("board__project")
+        )
+        if not existing:
+            raise ValidationError({"ids": "None of these ids exist."})
+
+        project_ids = {item.board.project_id for item in existing}
+        if len(project_ids) > 1:
+            raise ValidationError({"ids": "All ids must belong to work items in the same project."})
+
+        project = existing[0].board.project
+        self.check_object_permissions(self.request, project)
+
+        found_ids = {item.id for item in existing}
+        missing_ids = [i for i in ids if i not in found_ids]
+        return existing, missing_ids, project
+
+    @action(detail=False, methods=["post"], url_path="bulk-move")
+    def bulk_move(self, request):
+        status_id = request.data.get("status")
+        items, missing_ids, project = self._resolve_batch(request.data.get("ids"))
+
+        target_status = WorkItemStatus.objects.filter(pk=status_id).first()
+        if not target_status or target_status.project_id != project.id:
+            raise ValidationError({"status": "Status must belong to this item's project."})
+
+        succeeded = []
+        for item in items:
+            item.status = target_status
+            item.save(update_fields=["status"])
+            succeeded.append(item.id)
+        failed = [{"id": i, "error": "Not found."} for i in missing_ids]
+        return Response({"succeeded": succeeded, "failed": failed})
+
+    @action(detail=False, methods=["post"], url_path="bulk-update")
+    def bulk_update(self, request):
+        data = request.data
+        items, missing_ids, project = self._resolve_batch(data.get("ids"))
+
+        assignee = None
+        if "assignee" in data and data["assignee"] is not None:
+            from django.contrib.auth import get_user_model
+
+            User = get_user_model()
+            assignee = User.objects.filter(pk=data["assignee"]).first()
+            if not assignee:
+                raise ValidationError({"assignee": "User not found."})
+
+        priority = data.get("priority")
+        if priority is not None and int(priority) not in (1, 2, 3):
+            raise ValidationError({"priority": "Must be 1, 2, or 3."})
+
+        components_add = []
+        if data.get("components_add"):
+            components_add = list(Component.objects.filter(id__in=data["components_add"]))
+            mismatched = [c for c in components_add if c.project_id != project.id]
+            if mismatched:
+                raise ValidationError({"components_add": "Components must belong to this item's project."})
+
+        labels_add = data.get("labels_add") or []
+        resolved_labels = resolve_labels(labels_add, request.user) if labels_add else []
+
+        succeeded = []
+        for item in items:
+            update_fields = []
+            if "assignee" in data:
+                item.assignee = assignee
+                update_fields.append("assignee")
+            if priority is not None:
+                item.priority = int(priority)
+                update_fields.append("priority")
+            if update_fields:
+                item.save(update_fields=update_fields)
+            if resolved_labels:
+                item.labels.add(*resolved_labels)
+            if components_add:
+                item.components.add(*components_add)
+            succeeded.append(item.id)
+        failed = [{"id": i, "error": "Not found."} for i in missing_ids]
+        return Response({"succeeded": succeeded, "failed": failed})
+
+    @action(detail=False, methods=["post"], url_path="bulk-delete")
+    def bulk_delete(self, request):
+        items, missing_ids, project = self._resolve_batch(request.data.get("ids"))
+        deleted = []
+        for item in items:
+            WorkItem.objects.filter(parent=item).update(parent=None)
+            deleted_id = item.id
+            item.delete()
+            deleted.append(deleted_id)
+        failed = [{"id": i, "error": "Not found."} for i in missing_ids]
+        return Response({"deleted": deleted, "failed": failed})
 
     @action(detail=True, methods=["get"])
     def children(self, request, pk=None):
