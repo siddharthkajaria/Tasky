@@ -149,6 +149,24 @@ class Component(models.Model):
         return f"{self.name} ({self.project})"
 
 
+class Label(models.Model):
+    name = models.CharField(max_length=80, unique=True)
+    color = models.CharField(max_length=7)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="labels_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class WorkItemStatus(models.Model):
     class Category(models.TextChoices):
         TODO = "todo", "To Do"

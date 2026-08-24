@@ -10,6 +10,11 @@ from .models import CustomField, ProjectScreenAssignment, ScreenField, WorkItem,
 
 _DEFAULT_STATUSES = [("To Do", "todo", 0), ("In Progress", "in_progress", 1), ("Done", "done", 2)]
 
+LABEL_PALETTE = [
+    "#6E4FA3", "#2E7D5B", "#3B3F8F", "#A32218",
+    "#B8860B", "#1F7A8C", "#C2447A", "#5B7B29",
+]
+
 
 def seed_default_statuses(project) -> dict:
     """The 3 default statuses every project starts with. Idempotent: if the

@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from accounts.serializers import UserSerializer
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Board, Comment, Component, CustomField, FieldOption, Label, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
 from .services import apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status
 
 VALID_PARENT_TYPES = {
@@ -72,6 +72,43 @@ class ComponentSerializer(serializers.ModelSerializer):
         if not value.strip():
             raise serializers.ValidationError("This field may not be blank.")
         return value.strip()
+
+
+class LabelSerializer(serializers.ModelSerializer):
+    created_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Label
+        fields = ["id", "name", "color", "created_by", "created_at"]
+        read_only_fields = ["created_by", "created_at"]
+
+    def validate_name(self, value):
+        clean = value.strip()
+        if not clean:
+            raise serializers.ValidationError("This field may not be blank.")
+        qs = Label.objects.filter(name__iexact=clean)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(f'"{clean}" already exists.')
+        return clean
+
+    def validate_color(self, value):
+        from .services import LABEL_PALETTE
+
+        if value not in LABEL_PALETTE:
+            raise serializers.ValidationError("Pick a color from the palette.")
+        return value
+
+
+class LabelSummarySerializer(serializers.ModelSerializer):
+    """Embedded on a work item as `labels_detail` — id/name/color only, no
+    `created_by`/`created_at`. Mirrors how `WorkItemStatusSummarySerializer`
+    trims down `WorkItemStatusSerializer` for the same reason."""
+
+    class Meta:
+        model = Label
+        fields = ["id", "name", "color"]
 
 
 class WorkItemStatusSerializer(serializers.ModelSerializer):

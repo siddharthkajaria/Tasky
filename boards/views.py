@@ -11,13 +11,14 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Board, Comment, Component, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
 from .serializers import (
     BoardSerializer,
     CommentSerializer,
     ComponentSerializer,
     CustomFieldSerializer,
     FieldOptionSerializer,
+    LabelSerializer,
     MoveWorkItemSerializer,
     ScreenFieldSerializer,
     ScreenSerializer,
@@ -327,6 +328,28 @@ class ComponentViewSet(viewsets.ModelViewSet):
         role = instance.project.memberships.get(user=self.request.user).role
         if not can_manage_components(role):
             raise PermissionDenied("You don't have permission to manage components.")
+        instance.delete()
+
+
+class LabelViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "patch", "delete"]
+    serializer_class = LabelSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+    queryset = Label.objects.all()
+
+    def perform_update(self, serializer):
+        if not user_can_manage_definitions(self.request.user):
+            raise PermissionDenied(
+                "Only a project Owner can manage labels. You're not an Owner of any project."
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not user_can_manage_definitions(self.request.user):
+            raise PermissionDenied(
+                "Only a project Owner can manage labels. You're not an Owner of any project."
+            )
         instance.delete()
 
 

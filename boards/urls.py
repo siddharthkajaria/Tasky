@@ -7,6 +7,7 @@ from .views import (
     ComponentViewSet,
     CustomFieldViewSet,
     FieldOptionViewSet,
+    LabelViewSet,
     ProjectScreenAssignmentsView,
     ScreenFieldViewSet,
     ScreenViewSet,
@@ -22,6 +23,7 @@ router.register("comments", CommentViewSet, basename="comment")
 router.register("work-item-links", WorkItemLinkViewSet, basename="work-item-link")
 router.register("fields", CustomFieldViewSet, basename="custom-field")
 router.register("screens", ScreenViewSet, basename="screen")
+router.register("labels", LabelViewSet, basename="label")
 
 urlpatterns = router.urls + [
     path(
