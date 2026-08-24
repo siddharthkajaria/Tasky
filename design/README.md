@@ -16,6 +16,7 @@ prototype of the whole product, not a one-off mockup.
 | 2b — Custom Fields & Screens | `../docs/superpowers/specs/2026-08-18-tasky-custom-fields-screens-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 | 3 — Workflows | `../docs/superpowers/specs/2026-08-18-tasky-workflows-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 | 4 — Labels | `../docs/superpowers/specs/2026-08-18-tasky-labels-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
+| 2c — Bulk Operations & Import | `../docs/superpowers/specs/2026-08-24-tasky-bulk-import-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -131,6 +132,29 @@ Sign in as `asha`, `kabir` or `lena` — any password works.
     an item is made, not just after.
 22. **Remove a chip** (click its ×) before saving, on either the create
     form or the detail modal, to confirm it's gone and never got applied.
+
+## Sub-project 2c — Bulk Operations & Import
+
+23. **Open the Sprint Board and click "Select"** (top right). Checkboxes
+    appear on every card, and clicking a card now toggles its checkbox
+    instead of opening the detail modal.
+24. **Select 2–3 cards.** A bulk-action bar appears above the columns:
+    move to a status, set assignee, set priority, add a label, add a
+    component, delete, or clear the selection.
+25. **Try each bulk action** — move a batch to a different status, apply
+    a label to all of them (reopen one afterward to confirm it stuck),
+    bump their priority. Each one shows a toast and updates the board
+    live, no reload.
+26. **Try bulk delete** — a confirm prompt names the count before
+    anything is removed.
+27. **Click "Select" again** to leave select mode — checkboxes disappear,
+    clicking a card opens the detail modal again.
+28. **Click "Import"** (top right) and paste a CSV with a header row —
+    `title` is the only required column; try `item_type`, `status`,
+    `priority`, `assignee`, `labels`, `components` too (see the modal's
+    own column reference). Import succeeds per-row: a bad row (blank
+    title, or `item_type: subtask`) is reported and skipped without
+    blocking the rest of the file.
 
 All state is in memory — refreshing the page resets it to the seed above.
 

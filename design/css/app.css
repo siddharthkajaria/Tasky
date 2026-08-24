@@ -199,6 +199,45 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .back:hover { color: var(--ink); }
 
+/* Bulk operations & import (sub-project 2c) ------------------------------ */
+
+.board-head-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn.is-active { border-color: var(--accent); background: var(--accent-w); color: var(--accent); }
+
+.bulk-bar[hidden] { display: none; }
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--sunk);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+.bulk-count { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-right: 4px; }
+.bulk-bar select, .bulk-bar input[type="text"] {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.bulk-bar input[type="text"] { width: 140px; }
+
+.card-select {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.wi-card { position: relative; }
+.wi-card.is-selected { border-color: var(--accent); background: var(--accent-w); }
+
+.import-results { margin-top: 14px; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12.5px; }
+.import-results ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); }
+.import-results li { margin-bottom: 4px; }
+
 /* Modal ----------------------------------------------------------------- */
 
 .scrim {

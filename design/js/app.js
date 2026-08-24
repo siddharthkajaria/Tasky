@@ -1588,7 +1588,10 @@ function applyCustomFieldErrors(scope, errors) {
 
 /* Board — work items (sub-project 2a) ------------------------------------ */
 
-let boardState = { projectId: null, boardId: null, statuses: null, buckets: null };
+let boardState = {
+  projectId: null, boardId: null, statuses: null, buckets: null,
+  selectMode: false, selectedIds: new Set(),
+};
 
 // Buckets are keyed by status id (a number) now, not a fixed status string —
 // every column in `boardState.statuses` gets an entry, empty or not, so a
@@ -1605,11 +1608,16 @@ async function viewBoard(projectId, boardId) {
   main.replaceChildren(tpl('tpl-board'));
   boardState.projectId = projectId;
   boardState.boardId = boardId;
+  boardState.selectMode = false;
+  boardState.selectedIds = new Set();
 
   main.querySelector('[data-back-link]').href = `#/projects/${projectId}`;
   main.querySelector('[data-type-legend]').innerHTML = Logic.ITEM_TYPES.map(t =>
     `<span class="legend-item"><i class="type-dot type-${t}"></i>${Logic.ITEM_TYPE_LABEL[t]}</span>`
   ).join('');
+
+  main.querySelector('[data-select-toggle]').addEventListener('click', toggleSelectMode);
+  main.querySelector('[data-import-btn]').addEventListener('click', openImportModal);
 
   const columnsEl = main.querySelector('[data-columns]');
   columnsEl.innerHTML = '<p class="loading">Loading board…</p>';
@@ -1671,7 +1679,8 @@ function columnEl(status, items) {
 
 function workItemCard(item) {
   const el = document.createElement('article');
-  el.className = `wi-card p${item.priority || 2}`;
+  const selected = boardState.selectedIds.has(item.id);
+  el.className = `wi-card p${item.priority || 2}` + (selected ? ' is-selected' : '');
   el.tabIndex = 0;
 
   const parentChip = item.parent_detail
@@ -1683,6 +1692,9 @@ function workItemCard(item) {
     .join('');
 
   el.innerHTML =
+    (boardState.selectMode
+      ? `<label class="card-select" data-select-wrap><input type="checkbox" ${selected ? 'checked' : ''}></label>`
+      : '') +
     `<div class="wi-top">` +
       `<span class="key-pill">${esc(item.key)}</span>` +
       `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
@@ -1691,11 +1703,206 @@ function workItemCard(item) {
     (labelChips ? `<div class="card-labels">${labelChips}</div>` : '') +
     `<div class="card-meta">${parentChip}${who}</div>`;
 
-  el.addEventListener('click', () => openWorkItemModal(item.id));
+  const openOrToggle = () => {
+    if (boardState.selectMode) { toggleCardSelection(item.id, el); return; }
+    openWorkItemModal(item.id);
+  };
+  el.addEventListener('click', openOrToggle);
   el.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWorkItemModal(item.id); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openOrToggle(); }
   });
+  const checkbox = el.querySelector('[data-select-wrap] input');
+  if (checkbox) {
+    checkbox.addEventListener('click', (e) => e.stopPropagation());
+    checkbox.addEventListener('change', () => toggleCardSelection(item.id, el, checkbox.checked));
+  }
   return el;
+}
+
+/* Multi-select + bulk operations (sub-project 2c) ------------------------- */
+
+function toggleSelectMode() {
+  boardState.selectMode = !boardState.selectMode;
+  boardState.selectedIds = new Set();
+  const btn = root.querySelector('[data-select-toggle]');
+  btn.classList.toggle('is-active', boardState.selectMode);
+  btn.textContent = boardState.selectMode ? 'Done' : 'Select';
+  paintColumns();
+  renderBulkBar();
+}
+
+function toggleCardSelection(itemId, cardEl, forceChecked) {
+  const checked = forceChecked !== undefined ? forceChecked : !boardState.selectedIds.has(itemId);
+  if (checked) boardState.selectedIds.add(itemId); else boardState.selectedIds.delete(itemId);
+  cardEl.classList.toggle('is-selected', checked);
+  const box = cardEl.querySelector('[data-select-wrap] input');
+  if (box) box.checked = checked;
+  renderBulkBar();
+}
+
+async function renderBulkBar() {
+  const bar = root.querySelector('[data-bulk-bar]');
+  if (!bar) return;
+  const count = boardState.selectedIds.size;
+  if (!boardState.selectMode || count === 0) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+
+  let members = [], components = [];
+  try {
+    [members, components] = await Promise.all([
+      Store.listMembers(boardState.projectId),
+      Store.listComponents(boardState.projectId),
+    ]);
+  } catch (err) { /* proceed with what we have */ }
+
+  bar.innerHTML =
+    `<span class="bulk-count">${count} selected</span>` +
+    `<select data-bulk-status aria-label="Move to status"><option value="">Move to…</option>${
+      (boardState.statuses || []).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')
+    }</select>` +
+    `<select data-bulk-assignee aria-label="Set assignee"><option value="">Assignee…</option><option value="__unassign">Unassign</option>${
+      members.map(m => `<option value="${m.id}">${esc(m.display_name)}</option>`).join('')
+    }</select>` +
+    `<select data-bulk-priority aria-label="Set priority"><option value="">Priority…</option><option value="1">Low</option><option value="2">Medium</option><option value="3">High</option></select>` +
+    `<input type="text" data-bulk-label placeholder="Add label…" aria-label="Add label">` +
+    `<select data-bulk-component aria-label="Add component"><option value="">Add component…</option>${
+      components.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    }</select>` +
+    `<button class="btn btn-danger" type="button" data-bulk-delete>Delete</button>` +
+    `<button class="btn btn-quiet" type="button" data-bulk-clear>Clear</button>`;
+
+  const ids = () => Array.from(boardState.selectedIds);
+
+  bar.querySelector('[data-bulk-status]').addEventListener('change', async (e) => {
+    const statusId = e.target.value;
+    if (!statusId) return;
+    try {
+      const result = await Store.bulkMoveWorkItems(ids(), Number(statusId));
+      reportBulkResult(result, 'succeeded');
+      await reloadBoard();
+    } catch (err) { handle(err); }
+    e.target.value = '';
+  });
+
+  bar.querySelector('[data-bulk-assignee]').addEventListener('change', async (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    try {
+      const result = await Store.bulkUpdateWorkItems(ids(), { assignee: value === '__unassign' ? null : Number(value) });
+      reportBulkResult(result, 'succeeded');
+      await reloadBoard();
+    } catch (err) { handle(err); }
+    e.target.value = '';
+  });
+
+  bar.querySelector('[data-bulk-priority]').addEventListener('change', async (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    try {
+      const result = await Store.bulkUpdateWorkItems(ids(), { priority: Number(value) });
+      reportBulkResult(result, 'succeeded');
+      await reloadBoard();
+    } catch (err) { handle(err); }
+    e.target.value = '';
+  });
+
+  const labelInput = bar.querySelector('[data-bulk-label]');
+  labelInput.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const name = labelInput.value.trim();
+    if (!name) return;
+    try {
+      const result = await Store.bulkUpdateWorkItems(ids(), { labels_add: [name] });
+      reportBulkResult(result, 'succeeded');
+      await reloadBoard();
+    } catch (err) { handle(err); }
+    labelInput.value = '';
+  });
+
+  bar.querySelector('[data-bulk-component]').addEventListener('change', async (e) => {
+    const value = e.target.value;
+    if (!value) return;
+    try {
+      const result = await Store.bulkUpdateWorkItems(ids(), { components_add: [Number(value)] });
+      reportBulkResult(result, 'succeeded');
+      await reloadBoard();
+    } catch (err) { handle(err); }
+    e.target.value = '';
+  });
+
+  bar.querySelector('[data-bulk-delete]').addEventListener('click', async () => {
+    if (!confirm(`Delete ${count} work item${count === 1 ? '' : 's'}? This can't be undone.`)) return;
+    try {
+      const result = await Store.bulkDeleteWorkItems(ids());
+      reportBulkResult(result, 'deleted');
+      boardState.selectedIds = new Set();
+      await reloadBoard();
+      renderBulkBar();
+    } catch (err) { handle(err); }
+  });
+
+  bar.querySelector('[data-bulk-clear]').addEventListener('click', () => {
+    boardState.selectedIds = new Set();
+    paintColumns();
+    renderBulkBar();
+  });
+}
+
+function reportBulkResult(result, successKey) {
+  const okCount = (result[successKey] || []).length;
+  const failCount = (result.failed || []).length;
+  if (!failCount) { toast(`${okCount} updated`); return; }
+  toast(`${okCount} updated, ${failCount} failed: ${result.failed[0].error}`, true);
+}
+
+async function openImportModal() {
+  const body = `
+    <div class="modal-head">
+      <p class="eyebrow">Import work items</p>
+      <button class="btn btn-quiet" data-close>Close</button>
+    </div>
+    <p class="hint">
+      Paste CSV with a header row. Required column: <code>title</code>. Optional:
+      <code>item_type</code> (epic/story/task/bug — never subtask), <code>description</code>,
+      <code>status</code> (a status name in this project), <code>priority</code>
+      (low/medium/high), <code>assignee</code> (username), <code>due_date</code>
+      (YYYY-MM-DD), <code>labels</code>, <code>components</code> (both
+      semicolon-separated names). Max 500 rows.
+    </p>
+    <label class="field">
+      <span>CSV</span>
+      <textarea data-import-csv rows="8" placeholder="title,item_type,status,priority,assignee,labels&#10;Fix login redirect,bug,To Do,high,asha,urgent;needs-design"></textarea>
+    </label>
+    <p class="form-error" data-error hidden></p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" type="button" data-import-submit>Import</button>
+      <button class="btn" data-close>Cancel</button>
+    </div>
+    <div class="import-results" data-import-results hidden></div>`;
+  const { modal } = openModal(body);
+  const textarea = modal.querySelector('[data-import-csv]');
+  const errorEl = modal.querySelector('[data-error]');
+  const resultsEl = modal.querySelector('[data-import-results]');
+
+  modal.querySelector('[data-import-submit]').addEventListener('click', async () => {
+    errorEl.hidden = true;
+    resultsEl.hidden = true;
+    const csv = textarea.value.trim();
+    if (!csv) { errorEl.textContent = 'Paste some CSV first.'; errorEl.hidden = false; return; }
+    try {
+      const result = await Store.importWorkItems(boardState.boardId, csv);
+      resultsEl.hidden = false;
+      const failLines = result.failed.map(f => `Row ${f.row}${f.title ? ` (${esc(f.title)})` : ''}: ${esc(f.error)}`);
+      resultsEl.innerHTML =
+        `<p>${result.imported} imported${result.failed.length ? `, ${result.failed.length} failed` : ''}.</p>` +
+        (failLines.length ? `<ul>${failLines.map(l => `<li>${l}</li>`).join('')}</ul>` : '');
+      if (result.imported) await reloadBoard();
+    } catch (err) {
+      errorEl.textContent = errorText(err);
+      errorEl.hidden = false;
+    }
+  });
 }
 
 function addWorkItemControl(status) {

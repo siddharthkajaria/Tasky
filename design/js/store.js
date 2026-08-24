@@ -628,6 +628,160 @@ const Store = (() => {
     return wait(null);
   }
 
+  /* ---- bulk operations & import (sub-project 2c) --------------------------
+     Best-effort, not all-or-nothing: a bad id lands in `failed` and the rest
+     of the batch still applies, matching the spec's error-handling table. A
+     uniform bad value (unknown status/assignee/component) is instead a
+     same-shape `fail()` before touching any row — there's nothing "partial"
+     about a value that would be wrong for every row alike. */
+
+  function bulkMoveWorkItems(ids, statusId) {
+    const status = workItemStatuses.find(s => s.id === Number(statusId));
+    if (!status) return fail(400, 'Status not found.');
+    const succeeded = [];
+    const failed = [];
+    (ids || []).forEach(raw => {
+      const itemId = Number(raw);
+      const item = workItems.find(w => w.id === itemId);
+      if (!item) { failed.push({ id: itemId, error: 'Not found.' }); return; }
+      if (status.project !== boardProjectId(item.board)) {
+        return fail(400, "Status must belong to this item's project.");
+      }
+      item.status = status.id;
+      succeeded.push(itemId);
+    });
+    return wait({ succeeded, failed });
+  }
+
+  function bulkUpdateWorkItems(ids, fields) {
+    const succeeded = [];
+    const failed = [];
+    (ids || []).forEach(raw => {
+      const itemId = Number(raw);
+      const item = workItems.find(w => w.id === itemId);
+      if (!item) { failed.push({ id: itemId, error: 'Not found.' }); return; }
+      if ('assignee' in fields) item.assignee = fields.assignee || null;
+      if ('priority' in fields) item.priority = fields.priority;
+      if (fields.labels_add && fields.labels_add.length) {
+        const addIds = resolveLabelIds(fields.labels_add);
+        item.label_ids = [...new Set([...(item.label_ids || []), ...addIds])];
+      }
+      if (fields.components_add && fields.components_add.length) {
+        const addIds = fields.components_add.map(Number);
+        item.component_ids = [...new Set([...(item.component_ids || []), ...addIds])];
+      }
+      succeeded.push(itemId);
+    });
+    return wait({ succeeded, failed });
+  }
+
+  function bulkDeleteWorkItems(ids) {
+    const deleted = [];
+    const failed = [];
+    (ids || []).forEach(raw => {
+      const itemId = Number(raw);
+      const item = workItems.find(w => w.id === itemId);
+      if (!item) { failed.push({ id: itemId, error: 'Not found.' }); return; }
+      workItems.forEach(w => { if (w.parent === item.id) w.parent = null; });
+      workItems = workItems.filter(w => w.id !== item.id);
+      links = links.filter(l => l.item_a !== item.id && l.item_b !== item.id);
+      workItemFieldValues = workItemFieldValues.filter(v => v.work_item !== item.id);
+      deleted.push(itemId);
+    });
+    return wait({ deleted, failed });
+  }
+
+  // A plain split-on-comma parser — real CSVs with quoted/escaped commas
+  // need a real parser; this mock's fixed column set never contains one.
+  function parseCsv(text) {
+    return text.split(/\r?\n/).filter(line => line.trim() !== '').map(line => line.split(',').map(c => c.trim()));
+  }
+
+  function importWorkItems(boardId, csvText) {
+    const board = boards.find(b => b.id === Number(boardId));
+    if (!board) return fail(404, 'Not found.');
+    try { requireMember(board.project); } catch (err) { return Promise.reject(err); }
+
+    const rows = parseCsv(csvText);
+    if (!rows.length) return fail(400, 'CSV file is empty.');
+    const header = rows[0].map(h => h.toLowerCase());
+    if (!header.includes('title')) return fail(400, 'CSV must include a "title" column.');
+    const dataRows = rows.slice(1);
+    if (dataRows.length > 500) return fail(400, 'CSV has more than 500 rows.');
+
+    const priorityMap = { low: 1, medium: 2, high: 3 };
+    let imported = 0;
+    const failed = [];
+
+    dataRows.forEach((cells, i) => {
+      const rowNum = i + 2; // header is row 1
+      const row = {};
+      header.forEach((h, idx) => { row[h] = (cells[idx] || '').trim(); });
+      const title = row.title;
+      const failRow = (error) => failed.push({ row: rowNum, title: title || null, error });
+      if (!title) return failRow('Title is required.');
+
+      const itemType = (row.item_type || 'task').toLowerCase();
+      if (itemType === 'subtask') return failRow('Subtasks cannot be imported (need a parent).');
+      if (!Logic.ITEM_TYPES.includes(itemType)) return failRow(`Invalid item_type "${itemType}".`);
+
+      let status = defaultStatusFor(board.project);
+      if (row.status) {
+        const match = workItemStatuses.find(
+          s => s.project === board.project && s.name.toLowerCase() === row.status.toLowerCase()
+        );
+        if (!match) return failRow(`Status "${row.status}" not found.`);
+        status = match;
+      }
+
+      let priority = 2;
+      if (row.priority) {
+        const p = priorityMap[row.priority.toLowerCase()];
+        if (!p) return failRow(`Invalid priority "${row.priority}".`);
+        priority = p;
+      }
+
+      let assignee = null;
+      if (row.assignee) {
+        const user = users.find(u => u.username.toLowerCase() === row.assignee.toLowerCase());
+        if (!user) return failRow(`User "${row.assignee}" not found.`);
+        assignee = user.id;
+      }
+
+      let dueDate = null;
+      if (row.due_date) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(row.due_date)) return failRow(`Invalid due_date "${row.due_date}".`);
+        dueDate = row.due_date;
+      }
+
+      const componentIds = [];
+      if (row.components) {
+        const names = row.components.split(';').map(s => s.trim()).filter(Boolean);
+        for (const name of names) {
+          const comp = components.find(
+            c => c.project === board.project && c.name.toLowerCase() === name.toLowerCase()
+          );
+          if (!comp) return failRow(`Component "${name}" not found.`);
+          componentIds.push(comp.id);
+        }
+      }
+      const labelNames = row.labels ? row.labels.split(';').map(s => s.trim()).filter(Boolean) : [];
+
+      const item = seedItem({
+        id: id(), key: nextKey(board.project), board: board.id, item_type: itemType,
+        title, description: row.description || '',
+        status: status.id, priority, due_date: dueDate, assignee,
+        parent: null, component_ids: componentIds, label_ids: resolveLabelIds(labelNames),
+        created_by: me.id,
+      });
+      const siblings = workItems.filter(w => w.board === board.id && w.status === item.status && w.id !== item.id);
+      item.position = siblings.length;
+      imported++;
+    });
+
+    return wait({ imported, failed });
+  }
+
   /* ---- components ---- */
 
   function listComponents(projectId) {
@@ -1416,6 +1570,7 @@ const Store = (() => {
     inviteMember, acceptInvitation, declineInvitation,
     listBoards, createBoard, getBoard,
     listBoardWorkItems, getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem,
+    bulkMoveWorkItems, bulkUpdateWorkItems, bulkDeleteWorkItems, importWorkItems,
     listComponents, createComponent, renameComponent, deleteComponent,
     listStatuses, createStatus, updateStatus, moveStatus, deleteStatus,
     listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
