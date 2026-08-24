@@ -15,6 +15,7 @@ prototype of the whole product, not a one-off mockup.
 | 2a — Work Item Hierarchy | `../docs/superpowers/specs/2026-08-14-tasky-work-item-hierarchy-design.md` | Signed off, **shipped to production** (`boards/models.py`, `../ui/`) |
 | 2b — Custom Fields & Screens | `../docs/superpowers/specs/2026-08-18-tasky-custom-fields-screens-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 | 3 — Workflows | `../docs/superpowers/specs/2026-08-18-tasky-workflows-design.md` | Signed off — **backend implementation next** |
+| 4 — Labels | `../docs/superpowers/specs/2026-08-18-tasky-labels-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a and 2b already shipped, this prototype's Projects
 & Membership, Board/work-item, and Fields/Screens screens are now mostly a
@@ -108,6 +109,31 @@ Sign in as `asha`, `kabir` or `lena` — any password works.
     prototype — status changes go through the detail modal, same as every
     other field here.)
 
+## Sub-project 4 — Labels
+
+17. **Open Labels (top nav).** Global, free-form list — seeded with
+    `needs-design` and `urgent`. As Asha (Owner of some project), you can
+    click a label's colour dot to cycle it, click its name to rename it in
+    place, or delete it — deleting unassigns it from every work item, with
+    no "in use" guard, same as Components.
+18. **Open the Sprint Board.** `TASKY-2` and `TASKY-5` already carry a
+    label chip on their cards. Open `TASKY-2` — its detail modal has a
+    Labels section with `needs-design` already there.
+19. **Type a brand-new label straight onto a work item** — in that same
+    Labels section, type a name nobody's used yet and press Enter (or
+    `,`). It becomes a chip immediately, no separate "create label" step
+    anywhere. Save, then check it now shows up in the Labels admin list
+    too.
+20. **Try the same box's autocomplete** — start typing `urg` and the
+    existing `urgent` label should offer itself; pick it rather than
+    typing the whole thing, to reuse the label instead of minting a near-
+    duplicate.
+21. **Add a label via "+ Add work item"** on the board — the same chip
+    input is there on the create form, so a label can be set the moment
+    an item is made, not just after.
+22. **Remove a chip** (click its ×) before saving, on either the create
+    form or the detail modal, to confirm it's gone and never got applied.
+
 All state is in memory — refreshing the page resets it to the seed above.
 
 ## Files
@@ -133,5 +159,21 @@ All state is in memory — refreshing the page resets it to the seed above.
   different boards within one project?
 - Does "every category needs at least one status, always" read as a
   sensible guardrail or an annoying restriction once you hit it?
+- Anything from the spec's data model or flows that reads wrong once
+  you're actually clicking it, rather than reading it.
+
+## What to check when reviewing sub-project 4
+
+- Does free-text, self-serve label creation (anyone types a new one right
+  on a work item, no approval step) feel right, or did you want it gated
+  the way Statuses and Fields are?
+- Is global (shared across every project) the right scope for a label, or
+  did you want project-scoped labels instead, closer to how Components
+  work?
+- Does colour-coding by label help you scan a board, or is it just noise
+  once there are more than a handful of labels in play?
+- Is "rename/recolor/delete needs Owner of any project, but apply/create
+  is open to any member" the right split, or should applying a label be
+  restricted too?
 - Anything from the spec's data model or flows that reads wrong once
   you're actually clicking it, rather than reading it.

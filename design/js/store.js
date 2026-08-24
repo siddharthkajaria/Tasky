@@ -73,11 +73,33 @@ const Store = (() => {
   seedStatuses(3);
   seedStatuses(4);
 
+  // Labels (sub-project 4) data — declared here, ahead of the work item
+  // seed block below, so seeding can assign labels to seed items directly.
+  // The rest of the labels CRUD lives further down, grouped with Workflows;
+  // function declarations are hoisted regardless of position, but `let`/
+  // `const` bindings are not, so only the data itself needs to live this
+  // early.
+  const LABEL_PALETTE = [
+    '#6E4FA3', '#2E7D5B', '#3B3F8F', '#A32218',
+    '#B8860B', '#1F7A8C', '#C2447A', '#5B7B29',
+  ];
+  let labels = [];
+
+  // Seed-only: `findOrCreateLabel` (defined below, with the rest of the
+  // labels CRUD) uses `me.id` for `created_by`, but `me` is null until
+  // someone logs in — this runs at module load, before that. Hardcodes
+  // `created_by: 1` (Asha), matching how the rest of the seed data does.
+  function seedLabel(name) {
+    const label = { id: id(), name, color: hashLabelColor(name), created_by: 1 };
+    labels.push(label);
+    return label;
+  }
+
   let workItems = [];
   function seedItem(o) {
     const item = Object.assign({
       description: '', priority: 2, due_date: null, assignee: null,
-      parent: null, position: 0, component_ids: [], created_by: 1,
+      parent: null, position: 0, component_ids: [], label_ids: [], created_by: 1,
     }, o);
     workItems.push(item);
     return item;
@@ -90,10 +112,13 @@ const Store = (() => {
     id: id(), key: 'TASKY-1', board: board1.id, item_type: 'epic',
     title: 'Redesign onboarding', status: taskyStatuses.inProgress.id, priority: 3, assignee: 1,
   });
+  const lblNeedsDesign = seedLabel('needs-design');
+  const lblUrgent = seedLabel('urgent');
+
   const story1 = seedItem({
     id: id(), key: 'TASKY-2', board: board1.id, item_type: 'story', parent: epic.id,
     title: 'Design the welcome screen', status: taskyStatuses.todo.id, assignee: 3,
-    component_ids: [components[0].id],
+    component_ids: [components[0].id], label_ids: [lblNeedsDesign.id],
   });
   const task1 = seedItem({
     id: id(), key: 'TASKY-3', board: board1.id, item_type: 'task', parent: epic.id,
@@ -107,6 +132,7 @@ const Store = (() => {
   const bug1 = seedItem({
     id: id(), key: 'TASKY-5', board: board1.id, item_type: 'bug',
     title: 'Signup button misaligned on Safari', status: taskyStatuses.inProgress.id, priority: 3, assignee: 1,
+    label_ids: [lblUrgent.id],
   });
 
   let links = [
@@ -452,6 +478,7 @@ const Store = (() => {
         : null,
       children,
       components: components.filter(c => item.component_ids.includes(c.id)),
+      labels_detail: (item.label_ids || []).map(lid => labels.find(l => l.id === lid)).filter(Boolean),
     });
   }
 
@@ -524,6 +551,7 @@ const Store = (() => {
       status: status.id, priority: fields.priority || 2,
       due_date: fields.due_date || null, assignee: fields.assignee || null,
       parent: parent ? parent.id : null, component_ids: fields.component_ids || [],
+      label_ids: resolveLabelIds(fields.labels),
       created_by: me.id,
     });
     const siblings = workItems.filter(w => w.board === board.id && w.status === item.status && w.id !== item.id);
@@ -580,6 +608,7 @@ const Store = (() => {
     ['description', 'priority', 'due_date', 'assignee', 'component_ids'].forEach(f => {
       if (f in fields) item[f] = fields[f];
     });
+    if ('labels' in fields) item.label_ids = resolveLabelIds(fields.labels);
     if (newStatus) item.status = newStatus.id;
     if (newParent !== undefined) item.parent = newParent ? newParent.id : null;
     if ('custom_fields' in fields) applyCustomFields(item.id, fields.custom_fields);
@@ -736,6 +765,97 @@ const Store = (() => {
     }
     workItemStatuses = workItemStatuses.filter(s => s.id !== status.id);
     renumber(statusesFor(status.project));
+    return wait(null);
+  }
+
+  /* ---- labels (sub-project 4) -------------------------------------------
+     Global, free-form, self-serve — the opposite governance model from
+     Components. Applying a label to a work item (including inventing a
+     brand-new one) is open to any project member; renaming, recoloring or
+     deleting a label from the system is gated to an Owner of any project,
+     the same "canManageDefinitions" tier as CustomField/Screen.
+     `LABEL_PALETTE` and `labels` itself are declared earlier, ahead of the
+     work item seed block, so the seed can assign labels directly. */
+
+  // Deterministic, not random — the same name always lands on the same
+  // color, even across a delete-and-recreate, with no stored "next color"
+  // counter to keep in sync.
+  function hashLabelColor(name) {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+    return LABEL_PALETTE[hash % LABEL_PALETTE.length];
+  }
+
+  const listLabels = () => wait(labels.slice().sort((a, b) => a.name.localeCompare(b.name)));
+
+  // Lets the UI preview a chip's color for a not-yet-created label name —
+  // same deterministic hash `findOrCreateLabel` will use once it's saved,
+  // so the preview never flips color when the write actually happens.
+  function colorForLabelName(name) {
+    const clean = (name || '').trim();
+    if (!clean) return LABEL_PALETTE[0];
+    const existing = labels.find(l => l.name.toLowerCase() === clean.toLowerCase());
+    return existing ? existing.color : hashLabelColor(clean);
+  }
+
+  // The one place a Label gets created — implicitly, from a work item write
+  // naming one that doesn't exist yet. No POST /api/labels/ of its own.
+  // Case-insensitive match-or-create, so "urgent" and "Urgent" in the same
+  // write resolve to one label, never two.
+  function findOrCreateLabel(name) {
+    const clean = (name || '').trim();
+    if (!clean) return null;
+    let label = labels.find(l => l.name.toLowerCase() === clean.toLowerCase());
+    if (!label) {
+      label = { id: id(), name: clean, color: hashLabelColor(clean), created_by: me.id };
+      labels.push(label);
+    }
+    return label;
+  }
+
+  // Used by createWorkItem/updateWorkItem: a list of names (self-serve
+  // input) -> a deduped list of label ids, creating any that don't exist
+  // yet. Blank names are silently dropped rather than rejected — the UI
+  // never sends one, and there's no "this label doesn't exist" error to
+  // raise when naming one always succeeds.
+  function resolveLabelIds(names) {
+    const ids = (names || []).map(n => {
+      const label = findOrCreateLabel(n);
+      return label ? label.id : null;
+    }).filter(Boolean);
+    return [...new Set(ids)];
+  }
+
+  function renameLabel(labelId, name) {
+    const label = labels.find(l => l.id === Number(labelId));
+    if (!label) return fail(404, 'Not found.');
+    try { requireDefinitionManager('labels'); } catch (err) { return Promise.reject(err); }
+    const clean = (name || '').trim();
+    if (!clean) return fail(400, 'This field may not be blank.');
+    if (labels.some(l => l.id !== label.id && l.name.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, `"${clean}" already exists.`);
+    }
+    label.name = clean;
+    return wait(label);
+  }
+
+  function recolorLabel(labelId, color) {
+    const label = labels.find(l => l.id === Number(labelId));
+    if (!label) return fail(404, 'Not found.');
+    try { requireDefinitionManager('labels'); } catch (err) { return Promise.reject(err); }
+    if (!LABEL_PALETTE.includes(color)) return fail(400, 'Pick a color from the palette.');
+    label.color = color;
+    return wait(label);
+  }
+
+  function deleteLabel(labelId) {
+    const label = labels.find(l => l.id === Number(labelId));
+    if (!label) return fail(404, 'Not found.');
+    try { requireDefinitionManager('labels'); } catch (err) { return Promise.reject(err); }
+    labels = labels.filter(l => l.id !== label.id);
+    // Unassigns everywhere rather than blocking — labels are deliberately
+    // lightweight, matching how Component deletion already behaves.
+    workItems.forEach(w => { w.label_ids = (w.label_ids || []).filter(lid => lid !== label.id); });
     return wait(null);
   }
 
@@ -1298,6 +1418,7 @@ const Store = (() => {
     listBoardWorkItems, getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem,
     listComponents, createComponent, renameComponent, deleteComponent,
     listStatuses, createStatus, updateStatus, moveStatus, deleteStatus,
+    listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
     listLinks, createLink, deleteLink,
     listUsers,
     getMyCapabilities, listFieldTypes,

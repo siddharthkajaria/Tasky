@@ -119,6 +119,7 @@ function route() {
   // sit beside Projects in the nav rather than inside a project.
   if (hash === '/fields')  { setActiveNav('fields');  return viewFields(); }
   if (hash === '/screens') { setActiveNav('screens'); return viewScreens(); }
+  if (hash === '/labels')  { setActiveNav('labels');  return viewLabels(); }
 
   setActiveNav('projects');
   const boardMatch = hash.match(/^\/projects\/(\d+)\/boards\/(\d+)$/);
@@ -1289,6 +1290,167 @@ async function openScreenFieldsModal(screenId, canManage, onChange) {
   paint();
 }
 
+/* Labels admin (sub-project 4) --------------------------------------------
+   Global, free-form list — the admin screen only renames, recolors and
+   deletes; there's no create form, since a label is created implicitly the
+   first time someone types a new name onto a work item (see the chip-input
+   widget below). */
+
+async function viewLabels() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-labels'));
+
+  const list = main.querySelector('[data-list]');
+  const locked = main.querySelector('[data-locked]');
+  list.innerHTML = skeletonList(3);
+
+  let caps;
+  try { caps = await Store.getMyCapabilities(); }
+  catch (err) { list.innerHTML = ''; return handle(err); }
+
+  if (!caps.can_manage_definitions) {
+    locked.hidden = false;
+    locked.textContent =
+      "Only a project Owner can rename, recolor or delete a label — Owner of any project counts. " +
+      "Anyone can still apply an existing label, or create a new one, right on a work item.";
+  }
+
+  await paintLabels(list, caps.can_manage_definitions);
+}
+
+async function paintLabels(list, canManage) {
+  list.innerHTML = skeletonList(3);
+  try {
+    const labels = await Store.listLabels();
+    if (!labels.length) {
+      list.innerHTML = '<li class="empty">No labels yet. Type one onto a work item to create it.</li>';
+      return;
+    }
+    const rows = labels.map(l => labelRow(l, list, canManage));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    list.innerHTML = '';
+    handle(err);
+  }
+}
+
+function labelRow(label, list, canManage) {
+  const li = document.createElement('li');
+  li.className = 'label-admin-row';
+
+  li.innerHTML =
+    (canManage
+      ? `<button class="swatch-btn" data-swatch style="background:${label.color}" aria-label="Change color" type="button"></button>`
+      : `<span class="swatch" style="background:${label.color}"></span>`) +
+    `<span class="name" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(label.name)}</span>` +
+    (canManage ? `<span class="actions"><button class="btn btn-danger" data-delete>Delete</button></span>` : '');
+
+  const nameEl = li.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+    });
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === label.name) { nameEl.textContent = label.name; return; }
+      try {
+        await Store.renameLabel(label.id, value);
+        label.name = value;
+        toast('Label renamed');
+      } catch (err) {
+        nameEl.textContent = label.name;
+        handle(err);
+      }
+    });
+  }
+
+  const swatchBtn = li.querySelector('[data-swatch]');
+  if (swatchBtn) {
+    swatchBtn.addEventListener('click', async () => {
+      const options = Store.LABEL_PALETTE || [];
+      const next = options[(options.indexOf(label.color) + 1) % options.length];
+      try {
+        await Store.recolorLabel(label.id, next);
+        label.color = next;
+        swatchBtn.style.background = next;
+      } catch (err) { handle(err); }
+    });
+  }
+
+  const deleteBtn = li.querySelector('[data-delete]');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      try {
+        await Store.deleteLabel(label.id);
+        toast(`"${label.name}" deleted`);
+        await paintLabels(list, canManage);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  return li;
+}
+
+/* Label chip-input — a reusable widget for the work item create form and
+   detail modal. Free-text: press Enter or "," to turn the current input
+   value into a chip, backed by a <datalist> of existing label names for
+   autocomplete. Names, not ids — the store resolves each one to a label
+   (creating it if it's new) on save, same shape the real API will take. */
+
+function labelChipInput(initialNames, allLabels) {
+  const names = (initialNames || []).slice();
+  const wrap = document.createElement('div');
+  wrap.className = 'label-input-block';
+
+  const datalistId = `label-options-${Math.random().toString(36).slice(2)}`;
+  wrap.innerHTML =
+    `<div class="label-chip-list" data-chips></div>` +
+    `<input type="text" class="label-input" list="${datalistId}" placeholder="Add a label…" aria-label="Add a label">` +
+    `<datalist id="${datalistId}">${
+      (allLabels || []).map(l => `<option value="${esc(l.name)}">`).join('')
+    }</datalist>`;
+
+  const chipList = wrap.querySelector('[data-chips]');
+  const input = wrap.querySelector('.label-input');
+
+  function colorFor(name) {
+    const match = (allLabels || []).find(l => l.name.toLowerCase() === name.toLowerCase());
+    return match ? match.color : (Store.colorForLabelName ? Store.colorForLabelName(name) : '#888');
+  }
+
+  function paintChips() {
+    chipList.replaceChildren(...names.map(name => {
+      const chip = document.createElement('span');
+      chip.className = 'label-chip';
+      chip.style.background = colorFor(name);
+      chip.innerHTML = `${esc(name)}<button type="button" data-remove aria-label="Remove ${esc(name)}">×</button>`;
+      chip.querySelector('[data-remove]').addEventListener('click', () => {
+        const i = names.indexOf(name);
+        if (i !== -1) names.splice(i, 1);
+        paintChips();
+      });
+      return chip;
+    }));
+  }
+
+  function addFromInput() {
+    const clean = input.value.trim();
+    input.value = '';
+    if (!clean) return;
+    if (!names.some(n => n.toLowerCase() === clean.toLowerCase())) names.push(clean);
+    paintChips();
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addFromInput(); }
+  });
+  input.addEventListener('blur', addFromInput);
+
+  paintChips();
+  return { el: wrap, getNames: () => names.slice() };
+}
+
 /* Custom field controls on a work item form ------------------------------
    One renderer, used by both the work item modal and the board's inline
    "add work item" form, so a field looks and behaves the same wherever it
@@ -1516,6 +1678,9 @@ function workItemCard(item) {
     ? `<span class="parent-chip">${esc(item.parent_detail.key)}</span>` : '';
   const who = item.assignee_detail
     ? `<span class="who-chip">${esc(item.assignee_detail.display_name)}</span>` : '';
+  const labelChips = (item.labels_detail || [])
+    .map(l => `<span class="label-chip label-chip-sm" style="background:${l.color}">${esc(l.name)}</span>`)
+    .join('');
 
   el.innerHTML =
     `<div class="wi-top">` +
@@ -1523,6 +1688,7 @@ function workItemCard(item) {
       `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
     `</div>` +
     `<p class="card-title">${esc(item.title)}</p>` +
+    (labelChips ? `<div class="card-labels">${labelChips}</div>` : '') +
     `<div class="card-meta">${parentChip}${who}</div>`;
 
   el.addEventListener('click', () => openWorkItemModal(item.id));
@@ -1543,6 +1709,8 @@ function addWorkItemControl(status) {
   btn.addEventListener('click', async () => {
     let members = [];
     try { members = await Store.listMembers(boardState.projectId); } catch (err) { /* proceed without user_picker options */ }
+    let allLabels = [];
+    try { allLabels = await Store.listLabels(); } catch (err) { /* proceed without autocomplete */ }
 
     const form = document.createElement('form');
     form.className = 'add-wi-form';
@@ -1553,14 +1721,49 @@ function addWorkItemControl(status) {
       `<input name="title" placeholder="What needs doing?" aria-label="Title">` +
       `<select name="parent" aria-label="Parent"><option value="">No parent</option></select>` +
       `<div class="cf-grid" data-cf-container></div>` +
-      `<p class="form-error" data-error hidden></p>`;
+      `<div data-labels-container></div>` +
+      `<p class="form-error" data-error hidden></p>` +
+      `<button class="btn btn-primary" type="submit">Add</button>`;
     wrap.replaceChildren(form);
 
     const typeSelect = form.querySelector('[name=item_type]');
     const parentSelect = form.querySelector('[name=parent]');
     const titleInput = form.querySelector('[name=title]');
     const cfContainer = form.querySelector('[data-cf-container]');
+    const labelInput = labelChipInput([], allLabels);
+    form.querySelector('[data-labels-container]').replaceChildren(labelInput.el);
     titleInput.focus();
+
+    // Attached synchronously, right after the form enters the DOM — the
+    // remaining setup below awaits (screen fields), and the form is
+    // interactive the moment it's visible, so the submit handler must be
+    // live before that gap or a real submit falls through to the browser's
+    // native (page-navigating) form submission instead of this handler.
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!titleInput.value.trim()) return;
+      const errorEl = form.querySelector('[data-error]');
+      errorEl.hidden = true;
+      clearCustomFieldErrors(form);
+      const payload = {
+        board: boardState.boardId, item_type: typeSelect.value, title: titleInput.value,
+        parent: parentSelect.value || null, status, labels: labelInput.getNames(),
+      };
+      if (currentScreen && currentScreen.fields.length) {
+        payload.custom_fields = readCustomFieldInputs(form, currentScreen.fields);
+      }
+      try {
+        await Store.createWorkItem(payload);
+        await reloadBoard();
+      } catch (err) {
+        if (err.field === 'custom_fields') {
+          applyCustomFieldErrors(form, err.errors);
+        } else {
+          errorEl.textContent = errorText(err);
+          errorEl.hidden = false;
+        }
+      }
+    });
 
     function refreshParentOptions() {
       const type = typeSelect.value;
@@ -1593,32 +1796,6 @@ function addWorkItemControl(status) {
 
     const cancel = () => { if (!titleInput.value.trim()) wrap.replaceChildren(btn); };
     titleInput.addEventListener('blur', () => setTimeout(cancel, 150));
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!titleInput.value.trim()) return;
-      const errorEl = form.querySelector('[data-error]');
-      errorEl.hidden = true;
-      clearCustomFieldErrors(form);
-      const payload = {
-        board: boardState.boardId, item_type: typeSelect.value, title: titleInput.value,
-        parent: parentSelect.value || null, status,
-      };
-      if (currentScreen && currentScreen.fields.length) {
-        payload.custom_fields = readCustomFieldInputs(form, currentScreen.fields);
-      }
-      try {
-        await Store.createWorkItem(payload);
-        await reloadBoard();
-      } catch (err) {
-        if (err.field === 'custom_fields') {
-          applyCustomFieldErrors(form, err.errors);
-        } else {
-          errorEl.textContent = errorText(err);
-          errorEl.hidden = false;
-        }
-      }
-    });
   });
 
   return wrap;
@@ -1627,14 +1804,15 @@ function addWorkItemControl(status) {
 /* Work item detail modal -------------------------------------------------- */
 
 async function openWorkItemModal(itemId) {
-  let item, users, projectComponents, boardItems, members;
+  let item, users, projectComponents, boardItems, members, allLabels;
   try {
-    [item, users, projectComponents, boardItems, members] = await Promise.all([
+    [item, users, projectComponents, boardItems, members, allLabels] = await Promise.all([
       Store.getWorkItem(itemId),
       Store.listUsers(),
       Store.listComponents(boardState.projectId),
       Store.listBoardWorkItems(boardState.boardId),
       Store.listMembers(boardState.projectId),
+      Store.listLabels(),
     ]);
   } catch (err) { return handle(err); }
 
@@ -1739,6 +1917,11 @@ async function openWorkItemModal(itemId) {
       <div class="chip-check-list">${componentChips || '<p class="empty-inline">No components on this project yet.</p>'}</div>
     </div>
 
+    <div class="labels-block">
+      <h2>Labels</h2>
+      <div data-labels-container></div>
+    </div>
+
     <div class="children-block">
       <h2>Children</h2>
       ${childrenHtml}
@@ -1752,6 +1935,9 @@ async function openWorkItemModal(itemId) {
 
   const { modal, close } = openModal(body);
   const errorEl = modal.querySelector('[data-error]');
+
+  const labelInput = labelChipInput((item.labels_detail || []).map(l => l.name), allLabels);
+  modal.querySelector('[data-labels-container]').replaceChildren(labelInput.el);
 
   modal.querySelectorAll('.chip-check').forEach(chip => {
     const input = chip.querySelector('input');
@@ -1780,6 +1966,7 @@ async function openWorkItemModal(itemId) {
       due_date: modal.querySelector('[name=due_date]').value || null,
       assignee: modal.querySelector('[name=assignee]').value || null,
       component_ids: componentIds,
+      labels: labelInput.getNames(),
     };
     if (parentSelect) fields.parent = parentSelect.value || null;
     if (screenRows.length) fields.custom_fields = readCustomFieldInputs(modal, screenRows);

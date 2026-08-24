@@ -447,6 +447,79 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .component-row .who[contenteditable]:hover,
 .component-row .who[contenteditable]:focus { background: var(--sunk); outline: none; }
 
+/* Labels admin (sub-project 4) --------------------------------------------
+   Same row shape as .component-row, plus a colour swatch on the left —
+   the one governance-managed piece of a label besides its name. */
+
+.label-admin-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 7px; }
+.label-admin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 9px 14px;
+  animation: row-in .22s cubic-bezier(.2, .8, .2, 1) both;
+}
+.label-admin-row .swatch,
+.label-admin-row .swatch-btn {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: none;
+  padding: 0;
+}
+.label-admin-row .swatch-btn { cursor: pointer; }
+.label-admin-row .swatch-btn:hover { outline: 2px solid var(--rule-2); outline-offset: 2px; }
+.label-admin-row .name { flex: 1; font-weight: 500; }
+.label-admin-row .name[contenteditable] { border-radius: 2px; padding: 1px 4px; margin: -1px -4px; }
+.label-admin-row .name[contenteditable]:hover,
+.label-admin-row .name[contenteditable]:focus { background: var(--sunk); outline: none; }
+.label-admin-row .actions { display: flex; align-items: center; gap: 6px; }
+.label-admin-row .btn { padding: 4px 9px; font-size: 12px; }
+
+/* Label chips — free-text tags, colour-coded, distinct from the
+   checkbox-style .chip-check used for Components (a fixed list to toggle
+   on/off) since a label chip is typed and can be removed outright. */
+
+.label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 5px 3px 10px;
+  font-size: 12px;
+  color: #fff;
+}
+.label-chip button {
+  all: unset;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 50%;
+  opacity: .85;
+}
+.label-chip button:hover { opacity: 1; background: rgba(255, 255, 255, .2); }
+.label-chip-sm { padding: 1px 8px; font-size: 10px; }
+
+.card-labels { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+
+.label-input-block { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.label-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Two classes of specificity, deliberately — beats the .add-wi-form input
+   rule that would otherwise force this to full width inside that form. */
+.label-input-block .label-input {
+  width: auto;
+  border: 1px solid var(--rule-2);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  min-width: 120px;
+}
+.label-input-block .label-input:focus { border-color: var(--accent); outline: none; }
+
 /* Work item type system --------------------------------------------------- */
 
 :root {
@@ -621,12 +694,12 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .modal-actions .btn-danger { margin-left: auto; }
 
-.custom-fields-block, .components-block, .children-block, .links-block {
+.custom-fields-block, .components-block, .labels-block, .children-block, .links-block {
   margin-top: 18px;
   border-top: 1px solid var(--rule);
   padding-top: 14px;
 }
-.custom-fields-block h2, .components-block h2, .children-block h2, .links-block h2 {
+.custom-fields-block h2, .components-block h2, .labels-block h2, .children-block h2, .links-block h2 {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: .12em;
