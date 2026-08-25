@@ -37,7 +37,7 @@ from .serializers import (
     can_manage_screen_assignments,
     user_can_manage_definitions,
 )
-from .services import import_work_items_from_csv, move_work_item, next_position, resolve_labels
+from .services import import_work_items_from_csv, move_work_item, next_backlog_position, next_position, resolve_labels, schedule_work_item
 
 
 class BoardViewSet(viewsets.ModelViewSet):
@@ -86,6 +86,14 @@ class BoardViewSet(viewsets.ModelViewSet):
             raise ValidationError({"csv": "This field is required."})
         result = import_work_items_from_csv(board, csv_file, request.user)
         return Response(result)
+
+    @action(detail=True, methods=["get"])
+    def backlog(self, request, pk=None):
+        board = self.get_object()
+        items = board.work_items.filter(sprint__isnull=True).select_related(
+            "assignee", "created_by", "parent", "parent__status", "status"
+        ).prefetch_related("components", "labels", "field_values__field").order_by("backlog_position", "id")
+        return Response(WorkItemSerializer(items, many=True).data)
 
 
 class WorkItemViewSet(viewsets.ModelViewSet):
@@ -137,7 +145,10 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         # renumbering happens either side. Work items do not move between
         # boards in this product at all, so unlike status there is no
         # endpoint to redirect to; a real change is just rejected outright.
-        if "status" in request.data or "board" in request.data or "item_type" in request.data or "key" in request.data:
+        if (
+            "status" in request.data or "board" in request.data or "item_type" in request.data
+            or "key" in request.data or "sprint" in request.data
+        ):
             item = self.get_object()
             if "status" in request.data and str(request.data["status"]) != str(item.status_id):
                 raise ValidationError(
@@ -158,6 +169,22 @@ class WorkItemViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"item_type": "Type cannot be changed after creation."})
             if "key" in request.data and request.data["key"] != item.key:
                 raise ValidationError({"key": "Key cannot be changed."})
+            if "sprint" in request.data:
+                new_sprint = request.data["sprint"]
+                current_sprint = item.sprint_id
+                changed = (
+                    (new_sprint is None and current_sprint is not None)
+                    or (new_sprint is not None and str(new_sprint) != str(current_sprint))
+                )
+                if changed:
+                    raise ValidationError(
+                        {
+                            "sprint": (
+                                "Sprint cannot be changed here — "
+                                "POST to /api/work-items/{id}/schedule/ instead."
+                            )
+                        }
+                    )
         return super().update(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"])
@@ -184,6 +211,44 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             # PermissionDenied are) — it has to be translated explicitly, or
             # this would surface as a 500.
             raise Http404("Work item was deleted before the move could be applied.")
+        item.refresh_from_db()
+        return Response(WorkItemSerializer(item).data)
+
+    @action(detail=True, methods=["post"])
+    def schedule(self, request, pk=None):
+        item = self.get_object()
+        raw_sprint = request.data.get("sprint")
+        raw_position = request.data.get("position")
+
+        new_sprint_id = None
+        if raw_sprint is not None:
+            try:
+                new_sprint_id = int(raw_sprint)
+            except (TypeError, ValueError):
+                raise ValidationError({"sprint": "Must be an integer or null."})
+            sprint = Sprint.objects.filter(pk=new_sprint_id).first()
+            if not sprint or sprint.board_id != item.board_id:
+                raise ValidationError({"sprint": "Sprint must belong to this item's board."})
+            if sprint.state == Sprint.State.COMPLETED:
+                raise ValidationError({"sprint": "Can't schedule into a completed sprint."})
+
+        # No explicit `position` means "append to the end of the destination
+        # bucket" — the same default a drag-free schedule action (e.g. picking
+        # a sprint from a menu, not dragging into a specific slot) should have.
+        # An explicit `position` (a real drag-and-drop reorder) is honoured as
+        # given.
+        if raw_position is None:
+            position = next_backlog_position(item.board_id, new_sprint_id)
+        else:
+            try:
+                position = int(raw_position)
+            except (TypeError, ValueError):
+                raise ValidationError({"position": "Must be an integer."})
+
+        try:
+            schedule_work_item(item, new_sprint_id, position)
+        except WorkItem.DoesNotExist:
+            raise Http404
         item.refresh_from_db()
         return Response(WorkItemSerializer(item).data)
 
@@ -662,9 +727,17 @@ class SprintViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
         if instance.state != Sprint.State.PLANNED:
             raise ValidationError({"detail": "Only a planned sprint can be deleted."})
-        # Unguarded against "still has items scheduled into it" — WorkItem.sprint
-        # doesn't exist until Task 2, so there's nothing to check yet. Task 2
-        # replaces this method with the real "still has N items" guard.
+        still_scheduled = WorkItem.objects.filter(sprint=instance).count()
+        if still_scheduled:
+            raise ValidationError(
+                {
+                    "detail": (
+                        f"Still has {still_scheduled} work item"
+                        f"{'' if still_scheduled == 1 else 's'} scheduled into it. "
+                        f"Move {'it' if still_scheduled == 1 else 'them'} first."
+                    )
+                }
+            )
         instance.delete()
 
     @action(detail=True, methods=["post"])
@@ -696,10 +769,22 @@ class SprintViewSet(viewsets.ModelViewSet):
         sprint.state = Sprint.State.COMPLETED
         sprint.end_date = timezone.now().date()
         sprint.save(update_fields=["state", "end_date"])
-        # Task 2 adds: return this sprint's remaining work items to the
-        # backlog. WorkItem.sprint doesn't exist yet, so there's nothing to
-        # move — a sprint completed in this task's tests is always empty.
+        next_position = next_backlog_position(sprint.board_id, None)
+        stragglers = list(WorkItem.objects.filter(sprint=sprint).order_by("backlog_position", "id"))
+        for straggler in stragglers:
+            straggler.sprint = None
+            straggler.backlog_position = next_position
+            next_position += 1
+        WorkItem.objects.bulk_update(stragglers, ["sprint", "backlog_position"])
         return Response(SprintSerializer(sprint).data)
+
+    @action(detail=True, methods=["get"], url_path="work-items")
+    def work_items(self, request, pk=None):
+        sprint = self.get_object()
+        items = sprint.work_items.select_related(
+            "assignee", "created_by", "parent", "parent__status", "status"
+        ).prefetch_related("components", "labels", "field_values__field").order_by("backlog_position", "id")
+        return Response(WorkItemSerializer(items, many=True).data)
 
 
 class ProjectScreenAssignmentsView(APIView):

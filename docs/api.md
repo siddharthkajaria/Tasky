@@ -75,8 +75,9 @@ other removal).
 |---|---|---|
 | GET | `/api/work-items/` | every work item on a board in a project I'm a member of |
 | POST | `/api/work-items/` | `{board, item_type, title, description?, status?, priority?, due_date?, assignee?, parent?, components?, labels?}` |
-| GET/PUT/PATCH/DELETE | `/api/work-items/{id}/` | `key`, `item_type`, `position` are immutable; `status`/`board` unchanged from before |
+| GET/PUT/PATCH/DELETE | `/api/work-items/{id}/` | `key`, `item_type`, `position` are immutable; `status`/`board`/`sprint` unchanged from before |
 | POST | `/api/work-items/{id}/move/` | **breaking change:** `status` is now a `WorkItemStatus` id, not a string; see note below |
+| POST | `/api/work-items/{id}/schedule/` | `{sprint: <Sprint id or null>, position?: <int>}` — the only way to move a work item between the backlog and a sprint; see Sprints & Backlog below |
 | GET | `/api/boards/{id}/work-items/` | every work item on that board |
 | GET | `/api/work-items/{id}/children/` | direct children only (not grandchildren) |
 | GET/POST | `/api/work-items/{id}/links/` | list / create a "relates to" link; POST body is `{item: <other work item id>}` |
@@ -92,6 +93,10 @@ other removal).
 **`status` cannot be changed via `PATCH`/`PUT` on `/api/work-items/{id}/`.** A request whose `status` differs from the work item's current value is rejected with 400: `{"status": "Status cannot be changed here — POST to /api/work-items/{id}/move/ instead."}`. Moving a work item between columns is *only* done via `POST /api/work-items/{id}/move/`, which is the one endpoint that renumbers both the source and destination columns correctly. A `PATCH` that echoes back the work item's current, unchanged `status` alongside other real edits (e.g. `title`) is accepted — a UI PATCHing back the full set of fields it holds does not need to strip `status` out, it just must not try to change it that way.
 
 **`board` cannot be changed via `PATCH`/`PUT` on `/api/work-items/{id}/` either, for the same reason.** Work items do not move between boards in this product at all — a request whose `board` differs from the work item's current board is rejected with 400: `{"board": "Work items cannot be moved between boards."}`. As with `status`, a `PATCH` that echoes back the work item's current, unchanged `board` alongside other real edits is accepted.
+
+**`sprint` cannot be changed via `PATCH`/`PUT` on `/api/work-items/{id}/` either, same rule as `status`/`board`.** A request whose `sprint` differs from the work item's current value is rejected with 400: `{"sprint": "Sprint cannot be changed here — POST to /api/work-items/{id}/schedule/ instead."}`. Moving a work item into a sprint or back to the backlog is *only* done via `POST /api/work-items/{id}/schedule/` (see Sprints & Backlog, below), which is the one endpoint that renumbers both the source and destination buckets correctly. A `PATCH` that echoes back the work item's current, unchanged `sprint` (including `null`) alongside other real edits is accepted. `status` and `sprint` never constrain each other — a work item can be in any status while in the backlog or in any sprint, and moving it between the backlog and a sprint never touches its `status`.
+
+Every work item response carries `sprint` (the current `Sprint` id, or `null` for the backlog) and `sprint_detail` (a read-only nested `{id, name, state, start_date, end_date}` object, or `null` to match). A freshly created work item defaults to the backlog (`sprint: null`) unless `sprint` is given explicitly on create.
 
 Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `status_detail` (a nested `{id, name, category}` object for the current `status`, returned alongside the raw `status` id), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list), and `labels_detail` (the full nested `{id, name, color}` `Label` objects for the current `labels`). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
 
@@ -175,6 +180,34 @@ Each status has a `category` (one of `todo`, `in_progress`, `done`) and a `name`
 - It's the last remaining status in its category: `"<Category> needs at least one status."`
 
 When a status is deleted, all other statuses in the project are reordered (`position` values are renormalised to `0..n-1`).
+
+## Sprints & Backlog
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/boards/{id}/sprints/` | GET is readable by any project member; POST is Owner/Admin only |
+| GET | `/api/sprints/{id}/` | any project member |
+| PATCH | `/api/sprints/{id}/` | `{name, goal}`; Owner/Admin only; `board`/`state`/`start_date`/`end_date`/`created_by`/`created_at` are read-only |
+| DELETE | `/api/sprints/{id}/` | Owner/Admin only; see the guard below |
+| POST | `/api/sprints/{id}/start/` | Owner/Admin only; see the state-transition note below |
+| POST | `/api/sprints/{id}/complete/` | Owner/Admin only; see the state-transition note below |
+| GET | `/api/sprints/{id}/work-items/` | every work item currently scheduled into this sprint, ordered by `backlog_position` |
+| GET | `/api/boards/{id}/backlog/` | every work item on the board with `sprint: null`, ordered by `backlog_position` |
+
+A `Sprint` has a `state` of `planned`, `active`, or `completed`, and belongs to exactly one `board`. Response shape: `{id, board, name, goal, state, start_date, end_date, created_by, created_at}`.
+
+**`POST /api/sprints/{id}/start/` is rejected with 400 unless the sprint is `planned`** (`"Only a planned sprint can be started."`), and **is also rejected with 400 if another sprint on the same board is already `active`** (`"\"<name>\" is already active on this board. Complete it first."`) — a board can have at most one active sprint at a time. On success, `state` becomes `active` and `start_date` is set to today.
+
+**`POST /api/sprints/{id}/complete/` is rejected with 400 unless the sprint is `active`** (`"Only an active sprint can be completed."`). On success, `state` becomes `completed`, `end_date` is set to today, and **every work item still scheduled into that sprint is returned to the backlog** (`sprint` set to `null`), appended to the end of the board's backlog in the sprint's own `backlog_position` order — their `status` is left completely untouched.
+
+**`DELETE /api/sprints/{id}/` is rejected with 400 in two cases:**
+- The sprint isn't `planned` (`"Only a planned sprint can be deleted."`) — an `active` or `completed` sprint can never be deleted, only completed sprints keep their history.
+- The sprint still has one or more work items scheduled into it (`"Still has <N> work item(s) scheduled into it. Move them first."`) — schedule them elsewhere (or back to the backlog) via `/api/work-items/{id}/schedule/` first.
+
+**`POST /api/work-items/{id}/schedule/`** is the only endpoint that changes a work item's `sprint`. Body: `{sprint: <Sprint id or null>, position?: <int>}`. `sprint: null` schedules the item into the backlog; a `Sprint` id schedules it into that sprint. `position` is optional — omitting it appends the item to the end of the destination bucket (the backlog or the target sprint); an explicit `position` places it there instead, renumbering the bucket the same way `/move/` renumbers a status column. No separate permission check beyond ordinary work-item edit permission (project membership) — unlike creating/deleting a `Sprint` itself, any project member can schedule work into one. Rejected with 400 when:
+- `sprint` doesn't resolve to a real `Sprint`, or belongs to a different board than the work item: `{"sprint": "Sprint must belong to this item's board."}`
+- `sprint` is a `completed` sprint: `{"sprint": "Can't schedule into a completed sprint."}`
+
+`backlog_position` (like `position` on the status columns) is **not** a system-wide contiguous `0..n-1` invariant — it's a deterministic total order within its own bucket (the backlog, or one sprint), renormalised to a clean `0..n-1` at the moment `/schedule/` (or `/complete/`, for the items it returns to the backlog) renumbers that bucket. Deleting a work item does not renumber anything afterward, so gaps are expected and harmless, same as `position`.
 
 ## Custom Fields
 | Method | Path | Notes |

@@ -3,7 +3,7 @@ from rest_framework import serializers
 from accounts.serializers import UserSerializer
 
 from .models import Board, Comment, Component, CustomField, FieldOption, Label, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
-from .services import LABEL_PALETTE, apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status, resolve_labels
+from .services import LABEL_PALETTE, apply_custom_fields, custom_fields_read_map, custom_fields_write_error, next_backlog_position, resolve_default_status, resolve_labels
 
 VALID_PARENT_TYPES = {
     WorkItem.ItemType.EPIC: [],
@@ -251,13 +251,14 @@ class WorkItemSerializer(serializers.ModelSerializer):
     labels_detail = LabelSummarySerializer(source="labels", many=True, read_only=True)
     status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
     status = serializers.PrimaryKeyRelatedField(queryset=WorkItemStatus.objects.all(), required=False)
+    sprint_detail = SprintSummarySerializer(source="sprint", read_only=True)
     custom_fields = serializers.DictField(required=False, write_only=True)
 
     class Meta:
         model = WorkItem
         fields = [
             "id", "key", "board", "item_type", "title", "description",
-            "status", "status_detail", "priority", "priority_label", "due_date",
+            "status", "status_detail", "sprint", "sprint_detail", "priority", "priority_label", "due_date",
             "assignee", "assignee_detail", "parent", "parent_detail",
             "components", "components_detail", "labels", "labels_detail", "custom_fields",
             "position", "created_by", "created_at", "updated_at",

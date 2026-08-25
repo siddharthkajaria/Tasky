@@ -11,7 +11,7 @@ from django.db.utils import DataError
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Component, CustomField, Label, ProjectScreenAssignment, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
+from .models import Component, CustomField, Label, ProjectScreenAssignment, ScreenField, Sprint, WorkItem, WorkItemFieldValue, WorkItemStatus
 
 # Derived from WorkItem.Priority.choices (LOW = 1, "Low" / MEDIUM = 2,
 # "Medium" / HIGH = 3, "High") rather than hand-duplicated, so this can't
@@ -364,6 +364,18 @@ def next_position(board_id: int, status_id: int) -> int:
     return 0 if highest is None else highest + 1
 
 
+def next_backlog_position(board_id: int, sprint_id) -> int:
+    """The backlog_position a work item takes when appended to the end of
+    its bucket — the backlog (sprint_id=None) or one specific Sprint.
+    Same unlocked-read shape as next_position() above, for the same
+    reason: a benign duplicate self-heals the next time schedule_work_item()
+    renumbers that bucket."""
+    max_position = WorkItem.objects.filter(board_id=board_id, sprint_id=sprint_id).aggregate(
+        Max("backlog_position")
+    )["backlog_position__max"]
+    return 0 if max_position is None else max_position + 1
+
+
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -666,4 +678,50 @@ def move_work_item(item: WorkItem, new_status_id: int, new_position: int) -> Wor
         touched += renumber(old_status_id)
 
     WorkItem.objects.bulk_update(touched, ["position", "status", "updated_at"])
+    return item
+
+
+@transaction.atomic
+def schedule_work_item(item: WorkItem, new_sprint_id, new_position: int) -> WorkItem:
+    """Drop a work item into the backlog (new_sprint_id=None) or a sprint
+    at a position, then renumber the affected buckets. Mirrors
+    move_work_item()'s locking and renumbering shape exactly, keyed on
+    (board, sprint) instead of (board, status) — see that function's
+    docstring for the full reasoning on why locking every item on the
+    board (not just the two buckets) is what makes concurrent calls on
+    the same board serialise instead of deadlocking."""
+    locked = list(
+        WorkItem.objects.select_for_update()
+        .filter(board_id=item.board_id)
+        .order_by("id")
+    )
+
+    locked_by_pk = {c.pk: c for c in locked}
+    if item.pk not in locked_by_pk:
+        raise WorkItem.DoesNotExist(
+            f"WorkItem {item.pk} was deleted before the schedule could be applied."
+        )
+
+    old_sprint_id = locked_by_pk[item.pk].sprint_id
+    item.sprint_id = new_sprint_id
+
+    def renumber(sprint_id):
+        bucket = [c for c in locked if c.sprint_id == sprint_id and c.pk != item.pk]
+        bucket.sort(key=lambda c: (c.backlog_position, c.pk))
+
+        if sprint_id == new_sprint_id:
+            index = max(0, min(new_position, len(bucket)))
+            bucket.insert(index, item)
+
+        now = timezone.now()
+        for index, member in enumerate(bucket):
+            member.backlog_position = index
+            member.updated_at = now
+        return bucket
+
+    touched = renumber(new_sprint_id)
+    if old_sprint_id != new_sprint_id:
+        touched += renumber(old_sprint_id)
+
+    WorkItem.objects.bulk_update(touched, ["backlog_position", "sprint", "updated_at"])
     return item

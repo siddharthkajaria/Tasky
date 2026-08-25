@@ -69,6 +69,11 @@ urlpatterns = router.urls + [
         name="sprint-complete",
     ),
     path(
+        "sprints/<int:pk>/work-items/",
+        SprintViewSet.as_view({"get": "work_items"}),
+        name="sprint-work-items",
+    ),
+    path(
         "fields/<int:field_pk>/options/",
         FieldOptionViewSet.as_view({"post": "create"}),
         name="field-options",

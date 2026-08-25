@@ -59,6 +59,10 @@ class WorkItem(models.Model):
     )
     components = models.ManyToManyField("Component", blank=True, related_name="work_items")
     labels = models.ManyToManyField("Label", blank=True, related_name="work_items")
+    sprint = models.ForeignKey(
+        "Sprint", on_delete=models.SET_NULL, null=True, blank=True, related_name="work_items"
+    )
+    backlog_position = models.IntegerField(default=0)
     position = models.IntegerField(default=0)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -71,7 +75,10 @@ class WorkItem(models.Model):
 
     class Meta:
         ordering = ["position", "id"]
-        indexes = [models.Index(fields=["board", "status", "position"])]
+        indexes = [
+            models.Index(fields=["board", "status", "position"]),
+            models.Index(fields=["board", "sprint", "backlog_position"]),
+        ]
 
     def __str__(self) -> str:
         return self.title
