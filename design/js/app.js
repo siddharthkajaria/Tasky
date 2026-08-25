@@ -120,6 +120,7 @@ function route() {
   if (hash === '/fields')  { setActiveNav('fields');  return viewFields(); }
   if (hash === '/screens') { setActiveNav('screens'); return viewScreens(); }
   if (hash === '/labels')  { setActiveNav('labels');  return viewLabels(); }
+  if (hash === '/search')  { setActiveNav('search');  return viewSearch(); }
 
   setActiveNav('projects');
   const boardMatch = hash.match(/^\/projects\/(\d+)\/boards\/(\d+)$/);
@@ -1449,6 +1450,79 @@ function labelChipInput(initialNames, allLabels) {
 
   paintChips();
   return { el: wrap, getNames: () => names.slice() };
+}
+
+/* Search (sub-project 5) --------------------------------------------------
+   Cross-project, scoped to the caller's own memberships — the facet
+   dropdowns are only ever populated from projects/labels/users this person
+   can already see, so there's no way to even ask about a project you're
+   not in. */
+
+async function viewSearch() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-search'));
+
+  const form = main.querySelector('[data-search-form]');
+  const errorEl = main.querySelector('[data-error]');
+  const resultsEl = main.querySelector('[data-results]');
+
+  form.querySelector('[name=item_type]').insertAdjacentHTML('beforeend',
+    Logic.ITEM_TYPES.map(t => `<option value="${t}">${Logic.ITEM_TYPE_LABEL[t]}</option>`).join(''));
+  form.querySelector('[name=status_category]').insertAdjacentHTML('beforeend',
+    Logic.CATEGORIES.map(c => `<option value="${c}">${Logic.CATEGORY_LABELS[c]}</option>`).join(''));
+  form.querySelector('[name=priority]').insertAdjacentHTML('beforeend',
+    `<option value="1">Low</option><option value="2">Medium</option><option value="3">High</option>`);
+
+  try {
+    const [users, myProjects, allLabels] = await Promise.all([
+      Store.listUsers(), Store.listMyProjects(), Store.listLabels(),
+    ]);
+    form.querySelector('[name=assignee]').insertAdjacentHTML('beforeend',
+      users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join(''));
+    form.querySelector('[name=project]').insertAdjacentHTML('beforeend',
+      myProjects.map(p => `<option value="${p.id}">${esc(p.key)} — ${esc(p.name)}</option>`).join(''));
+    form.querySelector('[name=label]').insertAdjacentHTML('beforeend',
+      allLabels.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join(''));
+  } catch (err) { /* facets are a nice-to-have; a plain text search still works without them */ }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorEl.hidden = true;
+    const data = new FormData(form);
+    const params = {};
+    for (const [key, value] of data.entries()) { if (value) params[key] = value; }
+
+    try {
+      const { results } = await Store.search(params);
+      if (!results.length) {
+        resultsEl.innerHTML = '<li class="empty">No matches.</li>';
+        return;
+      }
+      const rows = results.map(searchResultRow);
+      resultsEl.replaceChildren(...rows);
+      stagger(rows);
+    } catch (err) {
+      resultsEl.innerHTML = '';
+      errorEl.textContent = errorText(err);
+      errorEl.hidden = false;
+    }
+  });
+}
+
+function searchResultRow(item) {
+  const li = document.createElement('li');
+  li.className = 'search-result-row';
+  const who = item.assignee_detail
+    ? `<span class="who-chip">${esc(item.assignee_detail.display_name)}</span>` : '';
+  li.innerHTML =
+    `<a href="#/projects/${item.project.id}/boards/${item.board.id}">` +
+      `<span class="key-pill">${esc(item.key)}</span>` +
+      `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
+      `<span class="search-title">${esc(item.title)}</span>` +
+      `<span class="search-meta">${esc(item.project.key)} · ${esc(item.status_detail.name)}</span>` +
+      who +
+    `</a>`;
+  return li;
 }
 
 /* Custom field controls on a work item form ------------------------------

@@ -17,6 +17,7 @@ prototype of the whole product, not a one-off mockup.
 | 3 — Workflows | `../docs/superpowers/specs/2026-08-18-tasky-workflows-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 | 4 — Labels | `../docs/superpowers/specs/2026-08-18-tasky-labels-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 | 2c — Bulk Operations & Import | `../docs/superpowers/specs/2026-08-24-tasky-bulk-import-design.md` | Signed off, **shipped to production** (`boards/views.py`, `boards/services.py`) |
+| 5 — Search | `../docs/superpowers/specs/2026-08-24-tasky-search-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -155,6 +156,23 @@ Sign in as `asha`, `kabir` or `lena` — any password works.
     own column reference). Import succeeds per-row: a bad row (blank
     title, or `item_type: subtask`) is reported and skipped without
     blocking the rest of the file.
+
+## Sub-project 5 — Search
+
+29. **Open Search (top nav).** Notice the Project dropdown only lists
+    projects you're actually a member of — as Asha, that's Tasky Redesign,
+    Website Refresh and Client Portal, never Marketing Launch (she only
+    has a pending invite there, not membership).
+30. **Submit with nothing filled in** — rejected, asking for a search term
+    or at least one filter. Try a 1-character term — rejected for being
+    too short (2 characters minimum).
+31. **Search a real term** — try "onboarding". Results show a key pill,
+    type badge, title, and project/status meta; clicking one jumps to
+    that item's board.
+32. **Try a facet-only search** — pick a Type or Priority with no text
+    and submit. Then combine a text term with a facet to narrow further.
+33. **Search for something that matches nothing** — a clean "No matches"
+    state, not an error.
 
 All state is in memory — refreshing the page resets it to the seed above.
 

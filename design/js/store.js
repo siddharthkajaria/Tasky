@@ -782,6 +782,103 @@ const Store = (() => {
     return wait({ imported, failed });
   }
 
+  /* ---- search (sub-project 5) --------------------------------------------
+     Cross-project, scoped to the caller's own memberships — never a project
+     they don't belong to, even as a facet filter. No `updated_at` exists on
+     seed work items in this mock, so recency ordering uses `id` descending
+     as a stand-in (higher id == created later) — the real API orders by the
+     genuine `updated_at` column instead. */
+
+  function search(params) {
+    const q = (params.q || '').trim();
+    const hasFacet = ['item_type', 'status_category', 'priority', 'assignee', 'component', 'label', 'project']
+      .some(k => params[k] !== undefined && params[k] !== null && params[k] !== '');
+    if (!q && !hasFacet) return fail(400, 'Provide a search term or at least one filter.');
+    if (q && q.length < 2) return fail(400, 'Search term must be at least 2 characters.');
+
+    const myProjectIds = new Set(memberships.filter(m => m.user === me.id).map(m => m.project));
+
+    let projectFilter = null;
+    if (params.project !== undefined && params.project !== '') {
+      const projectId = Number(params.project);
+      if (!myProjectIds.has(projectId)) return fail(400, 'Not a project you belong to.');
+      projectFilter = projectId;
+    }
+
+    let componentFilter = null;
+    if (params.component !== undefined && params.component !== '') {
+      const comp = components.find(c => c.id === Number(params.component));
+      if (!comp || !myProjectIds.has(comp.project)) return fail(400, 'Component not found.');
+      componentFilter = comp.id;
+    }
+
+    let labelFilter = null;
+    if (params.label !== undefined && params.label !== '') {
+      const raw = params.label;
+      const match = /^\d+$/.test(String(raw))
+        ? labels.find(l => l.id === Number(raw))
+        : labels.find(l => l.name.toLowerCase() === String(raw).toLowerCase());
+      if (!match) return fail(400, 'Label not found.');
+      labelFilter = match.id;
+    }
+
+    let assigneeFilter = null;
+    if (params.assignee !== undefined && params.assignee !== '') {
+      const u = userById(Number(params.assignee));
+      if (!u) return fail(400, 'User not found.');
+      assigneeFilter = u.id;
+    }
+
+    const candidates = workItems.filter(item => {
+      const board = boards.find(b => b.id === item.board);
+      if (!board || !myProjectIds.has(board.project)) return false;
+      if (projectFilter !== null && board.project !== projectFilter) return false;
+      if (params.item_type && item.item_type !== params.item_type) return false;
+      if (params.status_category) {
+        const status = workItemStatuses.find(s => s.id === item.status);
+        if (!status || status.category !== params.status_category) return false;
+      }
+      if (params.priority !== undefined && params.priority !== '' && item.priority !== Number(params.priority)) return false;
+      if (assigneeFilter !== null && item.assignee !== assigneeFilter) return false;
+      if (componentFilter !== null && !(item.component_ids || []).includes(componentFilter)) return false;
+      if (labelFilter !== null && !(item.label_ids || []).includes(labelFilter)) return false;
+      return true;
+    });
+
+    let ranked;
+    if (q) {
+      const needle = q.toLowerCase();
+      const tier1 = [];
+      const tier2 = [];
+      candidates.forEach(item => {
+        const inKeyOrTitle = item.key.toLowerCase().includes(needle) || item.title.toLowerCase().includes(needle);
+        const inDescription = (item.description || '').toLowerCase().includes(needle);
+        if (inKeyOrTitle) tier1.push(item);
+        else if (inDescription) tier2.push(item);
+      });
+      tier1.sort((a, b) => b.id - a.id);
+      tier2.sort((a, b) => b.id - a.id);
+      ranked = tier1.concat(tier2);
+    } else {
+      ranked = candidates.slice().sort((a, b) => b.id - a.id);
+    }
+
+    const results = ranked.slice(0, 50).map(item => {
+      const board = boards.find(b => b.id === item.board);
+      const project = projects.find(p => p.id === board.project);
+      return {
+        id: item.id, key: item.key, title: item.title, item_type: item.item_type,
+        status_detail: statusById(item.status),
+        priority: item.priority, priority_label: { 1: 'Low', 2: 'Medium', 3: 'High' }[item.priority],
+        assignee_detail: item.assignee ? userById(item.assignee) : null,
+        project: { id: project.id, key: project.key, name: project.name },
+        board: { id: board.id, name: board.name },
+      };
+    });
+
+    return wait({ results });
+  }
+
   /* ---- components ---- */
 
   function listComponents(projectId) {
@@ -1571,6 +1668,7 @@ const Store = (() => {
     listBoards, createBoard, getBoard,
     listBoardWorkItems, getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem,
     bulkMoveWorkItems, bulkUpdateWorkItems, bulkDeleteWorkItems, importWorkItems,
+    search,
     listComponents, createComponent, renameComponent, deleteComponent,
     listStatuses, createStatus, updateStatus, moveStatus, deleteStatus,
     listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
