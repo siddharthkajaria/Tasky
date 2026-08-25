@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models, transaction
+from django.db.models import F
 
 
 class Board(models.Model):
@@ -151,6 +152,27 @@ class Component(models.Model):
         ordering = ["name"]
         constraints = [
             models.UniqueConstraint(fields=["project", "name"], name="unique_component_name_per_project"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.project})"
+
+
+class Release(models.Model):
+    class Status(models.TextChoices):
+        UNRELEASED = "unreleased", "Unreleased"
+        RELEASED = "released", "Released"
+        ARCHIVED = "archived", "Archived"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="releases")
+    name = models.CharField(max_length=80)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.UNRELEASED)
+    release_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = [F("release_date").asc(nulls_last=True), "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "name"], name="unique_release_name_per_project"),
         ]
 
     def __str__(self) -> str:

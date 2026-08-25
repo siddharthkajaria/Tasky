@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
 from .serializers import (
     BoardSerializer,
     CommentSerializer,
@@ -23,6 +23,7 @@ from .serializers import (
     FieldOptionSerializer,
     LabelSerializer,
     MoveWorkItemSerializer,
+    ReleaseSerializer,
     ScreenFieldSerializer,
     ScreenSerializer,
     SearchResultSerializer,
@@ -32,6 +33,7 @@ from .serializers import (
     WorkItemSummarySerializer,
     WorkItemStatusSerializer,
     can_manage_components,
+    can_manage_releases,
     can_manage_sprints,
     can_manage_statuses,
     can_manage_screen_assignments,
@@ -562,6 +564,54 @@ class ComponentViewSet(viewsets.ModelViewSet):
         role = instance.project.memberships.get(user=self.request.user).role
         if not can_manage_components(role):
             raise PermissionDenied("You don't have permission to manage components.")
+        instance.delete()
+
+
+class ReleaseViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete"]
+    serializer_class = ReleaseSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    pagination_class = None
+
+    def get_project(self):
+        from projects.models import Project
+
+        return get_object_or_404(Project, pk=self.kwargs["project_pk"])
+
+    def get_queryset(self):
+        return Release.objects.filter(project_id=self.kwargs["project_pk"])
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.action in ("list", "create"):
+            self.check_object_permissions(request, self.get_project())
+
+    def perform_create(self, serializer):
+        project = self.get_project()
+        role = project.memberships.get(user=self.request.user).role
+        if not can_manage_releases(role):
+            raise PermissionDenied("You don't have permission to manage releases.")
+        name = serializer.validated_data.get("name")
+        if Release.objects.filter(project=project, name__iexact=name).exists():
+            raise ValidationError({"name": f'"{name}" already exists.'})
+        serializer.save(project=project, status=Release.Status.UNRELEASED)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        role = instance.project.memberships.get(user=self.request.user).role
+        if not can_manage_releases(role):
+            raise PermissionDenied("You don't have permission to manage releases.")
+        name = serializer.validated_data.get("name")
+        if name and Release.objects.filter(
+            project=instance.project, name__iexact=name
+        ).exclude(pk=instance.pk).exists():
+            raise ValidationError({"name": f'"{name}" already exists.'})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        role = instance.project.memberships.get(user=self.request.user).role
+        if not can_manage_releases(role):
+            raise PermissionDenied("You don't have permission to manage releases.")
         instance.delete()
 
 

@@ -9,6 +9,7 @@ from .views import (
     FieldOptionViewSet,
     LabelViewSet,
     ProjectScreenAssignmentsView,
+    ReleaseViewSet,
     ScreenFieldViewSet,
     ScreenViewSet,
     SearchView,
@@ -37,6 +38,16 @@ urlpatterns = router.urls + [
         "projects/<int:project_pk>/components/<int:pk>/",
         ComponentViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
         name="project-component-detail",
+    ),
+    path(
+        "projects/<int:project_pk>/releases/",
+        ReleaseViewSet.as_view({"get": "list", "post": "create"}),
+        name="project-releases",
+    ),
+    path(
+        "projects/<int:project_pk>/releases/<int:pk>/",
+        ReleaseViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"}),
+        name="project-release-detail",
     ),
     path(
         "projects/<int:project_pk>/statuses/",
