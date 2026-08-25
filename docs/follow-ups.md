@@ -214,6 +214,41 @@ non-atomic `complete/`) findings from that review were fixed before merge; these
   and neither can install a second `ACTIVE` sprint — this is only an idempotency wrinkle on
   `start_date`'s exact value.
 
+## Releases (sub-project 7) — deliberate non-goals / deferred items
+
+Nothing here blocks the backend — each item was considered during the final whole-branch review
+and consciously deferred. The Important (missing `select_related("release")` across every
+work-item read path) finding from that review was fixed before merge; these are what's left.
+
+- **TOCTOU on the duplicate-name check in `ReleaseViewSet.perform_create`/`perform_update`.**
+  Copied verbatim from `ComponentViewSet`/`WorkItemStatusViewSet` — not a regression introduced
+  here. Worth noting the DB `UniqueConstraint` on `(project, name)` is case-*sensitive* while the
+  app-level `name__iexact` check is case-insensitive, so a same-case concurrent-create race
+  degrades to an uncaught `IntegrityError` (500) instead of a clean 400, and a differing-case race
+  (e.g. two requests racing to create `"v2.3"` and `"V2.3"`) slips through entirely, leaving two
+  rows the app-level check was supposed to prevent. Not reachable in practice for an internal tool
+  where releases are created by one admin at a time — recorded honestly rather than fixed.
+- **No 403 test for `PATCH`/`DELETE` on a foreign-project release object.** The permission
+  mechanism (`IsProjectMember.has_object_permission` via `get_object()`) is shared,
+  already-exercised code — the identical path the tested `retrieve` case already covers. A
+  coverage gap, not a correctness gap.
+- **No dedicated anonymous-403 test on the `work_items` action specifically.** Same reasoning as
+  above: `permission_classes` is class-level, so `work_items` can't authenticate differently than
+  `list`/`retrieve` do.
+- **No explicit `.order_by()` on `ReleaseViewSet.work_items`'s queryset.** Not actually a gap —
+  `WorkItem.Meta.ordering = ["position", "id"]` already applies a deterministic order. The only
+  real note is that `position` is scoped per status column, so it isn't a *meaningful* order for a
+  cross-column release list — matching `BoardViewSet.work_items`'s identical existing behavior
+  (its docs already tell clients to group by status themselves).
+- **Coverage gap: no test proving Project A's release list is invisible when queried in a context
+  involving Project B.** Only non-membership and same-name-different-project uniqueness are
+  directly tested. `get_queryset()`'s `project_pk` filter makes this correct today — noted as a
+  gap, not a bug.
+- **Coverage gap: the delete-unassigns test doesn't explicitly assert that other fields (`title`,
+  `status`) survive untouched**, only that the item still exists and `release_id` is `null`.
+  `SET_NULL` only ever writes the one column, so this is safe — the test just doesn't pin it as
+  tightly as the spec's own wording ("without touching any other field") asks for.
+
 ## Local development note
 
 This machine's `.env` uses `MYSQL_PORT=3307` because a second MySQL occupies 3306. `.env.example`

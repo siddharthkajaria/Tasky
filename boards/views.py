@@ -76,7 +76,7 @@ class BoardViewSet(viewsets.ModelViewSet):
     def work_items(self, request, pk=None):
         board = self.get_object()
         items = board.work_items.select_related(
-            "assignee", "created_by", "parent", "parent__status", "status", "sprint"
+            "assignee", "created_by", "parent", "parent__status", "status", "sprint", "release"
         ).prefetch_related("components", "labels", "field_values__field")
         return Response(WorkItemSerializer(items, many=True).data)
 
@@ -93,7 +93,7 @@ class BoardViewSet(viewsets.ModelViewSet):
     def backlog(self, request, pk=None):
         board = self.get_object()
         items = board.work_items.filter(sprint__isnull=True).select_related(
-            "assignee", "created_by", "parent", "parent__status", "status"
+            "assignee", "created_by", "parent", "parent__status", "status", "release"
         ).prefetch_related("components", "labels", "field_values__field").order_by("backlog_position", "id")
         return Response(WorkItemSerializer(items, many=True).data)
 
@@ -105,7 +105,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = WorkItem.objects.select_related(
-            "board__project", "assignee", "created_by", "parent", "parent__status", "status", "sprint"
+            "board__project", "assignee", "created_by", "parent", "parent__status", "status", "sprint", "release"
         ).prefetch_related("components", "labels", "field_values__field")
         if self.action == "list":
             qs = qs.filter(
@@ -618,7 +618,7 @@ class ReleaseViewSet(viewsets.ModelViewSet):
     def work_items(self, request, project_pk=None, pk=None):
         release = self.get_object()
         items = release.work_items.select_related(
-            "assignee", "created_by", "parent", "parent__status", "status", "sprint"
+            "assignee", "created_by", "parent", "parent__status", "status", "sprint", "release"
         ).prefetch_related("components", "labels", "field_values__field")
         return Response(WorkItemSerializer(items, many=True).data)
 
@@ -852,7 +852,7 @@ class SprintViewSet(viewsets.ModelViewSet):
     def work_items(self, request, pk=None):
         sprint = self.get_object()
         items = sprint.work_items.select_related(
-            "assignee", "created_by", "parent", "parent__status", "status", "sprint"
+            "assignee", "created_by", "parent", "parent__status", "status", "sprint", "release"
         ).prefetch_related("components", "labels", "field_values__field").order_by("backlog_position", "id")
         return Response(WorkItemSerializer(items, many=True).data)
 
