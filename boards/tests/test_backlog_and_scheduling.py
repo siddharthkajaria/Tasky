@@ -106,6 +106,59 @@ def test_schedule_moves_an_item_from_backlog_into_a_sprint(auth_client, board, s
 
 
 @pytest.mark.django_db
+def test_schedule_with_an_explicit_position_inserts_into_the_middle_of_the_bucket(auth_client, board, status):
+    sprint = Sprint.objects.create(board=board, name="S", created_by=None)
+    first = WorkItem.objects.create(board=board, title="First", status=status, sprint=sprint, backlog_position=0, created_by=None)
+    second = WorkItem.objects.create(board=board, title="Second", status=status, sprint=sprint, backlog_position=1, created_by=None)
+    incoming = WorkItem.objects.create(board=board, title="Incoming", status=status, created_by=None)
+
+    response = auth_client.post(
+        f"/api/work-items/{incoming.id}/schedule/",
+        {"sprint": sprint.id, "position": 1},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    incoming.refresh_from_db()
+    ordered = sorted([first, second, incoming], key=lambda w: w.backlog_position)
+    assert [w.id for w in ordered] == [first.id, incoming.id, second.id]
+    assert [w.backlog_position for w in ordered] == [0, 1, 2]
+
+
+@pytest.mark.django_db
+def test_schedule_moves_an_item_directly_from_one_sprint_to_another(auth_client, board, status):
+    origin_sprint = Sprint.objects.create(board=board, name="Origin", created_by=None)
+    destination_sprint = Sprint.objects.create(board=board, name="Destination", created_by=None)
+    remaining_in_origin = WorkItem.objects.create(
+        board=board, title="Stays behind", status=status, sprint=origin_sprint, backlog_position=0, created_by=None,
+    )
+    item = WorkItem.objects.create(
+        board=board, title="X", status=status, sprint=origin_sprint, backlog_position=1, created_by=None,
+    )
+    already_in_destination = WorkItem.objects.create(
+        board=board, title="Already there", status=status, sprint=destination_sprint, backlog_position=0, created_by=None,
+    )
+
+    response = auth_client.post(
+        f"/api/work-items/{item.id}/schedule/", {"sprint": destination_sprint.id}, content_type="application/json"
+    )
+    assert response.status_code == 200
+
+    item.refresh_from_db()
+    remaining_in_origin.refresh_from_db()
+    already_in_destination.refresh_from_db()
+
+    assert item.sprint_id == destination_sprint.id
+    assert item.backlog_position == 1  # appended after already_in_destination
+    assert remaining_in_origin.sprint_id == origin_sprint.id
+    assert remaining_in_origin.backlog_position == 0  # renumbered after item left
+    assert already_in_destination.sprint_id == destination_sprint.id
+    assert already_in_destination.backlog_position == 0
+
+
+@pytest.mark.django_db
 def test_schedule_moves_an_item_back_to_the_backlog(auth_client, board, status):
     sprint = Sprint.objects.create(board=board, name="S", created_by=None)
     item = WorkItem.objects.create(board=board, title="X", status=status, sprint=sprint, created_by=None)

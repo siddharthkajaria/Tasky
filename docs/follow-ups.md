@@ -179,6 +179,41 @@ what's left.
   override and hit the same `ProtectedError` this build just fixed. No such call site exists
   anywhere in the codebase today; recorded so whoever adds one first knows to check this.
 
+## Backlog & Sprints (sub-project 6) — deliberate non-goals / deferred items
+
+Nothing here blocks the backend — each item was considered during the final whole-branch review
+and consciously deferred. The Important (missing `select_related("sprint")` on `/api/me/tasks/`,
+non-atomic `complete/`) findings from that review were fixed before merge; these are what's left.
+
+- **`schedule/`'s explicit `position` clamps a negative value to `0` instead of rejecting it with
+  400**, unlike `/move/`'s `MoveWorkItemSerializer`, which validates `position` with
+  `min_value=0` and 400s a negative one. `schedule_work_item`'s `renumber()` closure does
+  `max(0, min(new_position, len(bucket)))`, so a negative `position` silently becomes "front of
+  the bucket" instead of erroring. Cosmetic API-surface inconsistency between the two
+  position-taking endpoints, not a defect — the only client (the UI, once it exists) always sends
+  non-negative values.
+- **`WorkItemSerializer` doesn't expose `backlog_position` as a response field** — only `position`
+  (the status-column one) is. Deliberate: both `GET /api/boards/{id}/backlog/` and
+  `GET /api/sprints/{id}/work-items/` already return their items pre-ordered by
+  `backlog_position`, so no client has needed the raw number the way `position` is needed for
+  interleaved-by-status board data. Recorded as a conscious choice, not an oversight, in case a
+  future client wants to render an explicit index.
+- **The spec's error-response table lists `404` for `schedule/` against a nonexistent sprint id;
+  the implementation returns `400`.** This is a field-level validation error (`{"sprint": "Sprint
+  must belong to this item's board."}`), not a missing-resource error — matching the identical
+  precedent already set for a bad status id in a work-item body field, documented above under
+  "Carried out of the Workflows backend build (2026-08-21)": *"a bad status id in a work-item body
+  field correctly 400s instead, since it's a field-level validation error, not a missing
+  resource."* The message could be clearer that it also covers "doesn't exist" and not just "wrong
+  board" — optional polish, not required for this pass.
+- **Task 1's `start` action has a same-sprint double-submit race.** Two near-simultaneous
+  `POST /api/sprints/{id}/start/` calls on the SAME already-starting sprint can both pass the
+  pre-lock `sprint.state != Sprint.State.PLANNED` check (read before the `select_for_update()` on
+  the board) and both proceed to re-stamp `start_date`. Does not violate the one-active-sprint-
+  per-board invariant — the board-row lock inside the transaction still serialises the two calls
+  and neither can install a second `ACTIVE` sprint — this is only an idempotency wrinkle on
+  `start_date`'s exact value.
+
 ## Local development note
 
 This machine's `.env` uses `MYSQL_PORT=3307` because a second MySQL occupies 3306. `.env.example`

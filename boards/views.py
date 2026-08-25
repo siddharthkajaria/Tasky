@@ -768,16 +768,26 @@ class SprintViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
         if sprint.state != Sprint.State.ACTIVE:
             raise ValidationError({"detail": "Only an active sprint can be completed."})
-        sprint.state = Sprint.State.COMPLETED
-        sprint.end_date = timezone.now().date()
-        sprint.save(update_fields=["state", "end_date"])
-        next_position = next_backlog_position(sprint.board_id, None)
-        stragglers = list(WorkItem.objects.filter(sprint=sprint).order_by("backlog_position", "id"))
-        for straggler in stragglers:
-            straggler.sprint = None
-            straggler.backlog_position = next_position
-            next_position += 1
-        WorkItem.objects.bulk_update(stragglers, ["sprint", "backlog_position"])
+        # Same transaction: the state transition and returning this sprint's
+        # remaining items to the backlog must succeed or fail together. A
+        # sprint left `completed` with items still pointing at it (because
+        # the `bulk_update` below raised after `sprint.save()` committed)
+        # would have no recovery path through any other sprint endpoint —
+        # complete/ only accepts an `active` sprint, delete/ only a
+        # `planned` one.
+        with transaction.atomic():
+            sprint.state = Sprint.State.COMPLETED
+            sprint.end_date = timezone.now().date()
+            sprint.save(update_fields=["state", "end_date"])
+            next_position = next_backlog_position(sprint.board_id, None)
+            stragglers = list(WorkItem.objects.filter(sprint=sprint).order_by("backlog_position", "id"))
+            now = timezone.now()
+            for straggler in stragglers:
+                straggler.sprint = None
+                straggler.backlog_position = next_position
+                straggler.updated_at = now
+                next_position += 1
+            WorkItem.objects.bulk_update(stragglers, ["sprint", "backlog_position", "updated_at"])
         return Response(SprintSerializer(sprint).data)
 
     @action(detail=True, methods=["get"], url_path="work-items")
