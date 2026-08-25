@@ -74,7 +74,7 @@ class BoardViewSet(viewsets.ModelViewSet):
     def work_items(self, request, pk=None):
         board = self.get_object()
         items = board.work_items.select_related(
-            "assignee", "created_by", "parent", "parent__status", "status"
+            "assignee", "created_by", "parent", "parent__status", "status", "sprint"
         ).prefetch_related("components", "labels", "field_values__field")
         return Response(WorkItemSerializer(items, many=True).data)
 
@@ -103,7 +103,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = WorkItem.objects.select_related(
-            "board__project", "assignee", "created_by", "parent", "parent__status", "status"
+            "board__project", "assignee", "created_by", "parent", "parent__status", "status", "sprint"
         ).prefetch_related("components", "labels", "field_values__field")
         if self.action == "list":
             qs = qs.filter(
@@ -124,9 +124,11 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         # instead of splitting them across two.
         board = serializer.validated_data["board"]
         status = serializer.validated_data["status"]
+        sprint = serializer.validated_data.get("sprint")
         serializer.save(
             created_by=self.request.user,
             position=next_position(board.id, status.id),
+            backlog_position=next_backlog_position(board.id, sprint.id if sprint else None),
         )
 
     def update(self, request, *args, **kwargs):
@@ -782,7 +784,7 @@ class SprintViewSet(viewsets.ModelViewSet):
     def work_items(self, request, pk=None):
         sprint = self.get_object()
         items = sprint.work_items.select_related(
-            "assignee", "created_by", "parent", "parent__status", "status"
+            "assignee", "created_by", "parent", "parent__status", "status", "sprint"
         ).prefetch_related("components", "labels", "field_values__field").order_by("backlog_position", "id")
         return Response(WorkItemSerializer(items, many=True).data)
 

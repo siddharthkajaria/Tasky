@@ -26,6 +26,52 @@ def test_a_new_work_item_defaults_to_the_backlog(auth_client, board):
 
 
 @pytest.mark.django_db
+def test_create_rejects_a_sprint_from_a_different_board(auth_client, board, project, user):
+    other_board = Board.objects.create(name="Other", created_by=user, project=project)
+    other_sprint = Sprint.objects.create(board=other_board, name="S", created_by=None)
+    response = auth_client.post(
+        "/api/work-items/",
+        {"board": board.id, "title": "X", "sprint": other_sprint.id},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert "sprint" in response.json()
+    assert not WorkItem.objects.filter(title="X").exists()
+
+
+@pytest.mark.django_db
+def test_create_rejects_a_completed_sprint(auth_client, board):
+    sprint = Sprint.objects.create(board=board, name="S", created_by=None, state="completed")
+    response = auth_client.post(
+        "/api/work-items/",
+        {"board": board.id, "title": "X", "sprint": sprint.id},
+        content_type="application/json",
+    )
+    assert response.status_code == 400
+    assert "sprint" in response.json()
+    assert not WorkItem.objects.filter(title="X").exists()
+
+
+@pytest.mark.django_db
+def test_create_appends_to_the_end_of_the_backlog_not_position_zero(auth_client, board, status):
+    # Simulates a backlog whose max backlog_position has already been
+    # pushed above 0 by an earlier schedule/complete call — a brand-new
+    # work item must still land after everything already there, not jump
+    # to the top by defaulting to the model's backlog_position=0.
+    existing = WorkItem.objects.create(
+        board=board, title="Already there", status=status, backlog_position=5, created_by=None,
+    )
+    response = auth_client.post(
+        "/api/work-items/", {"board": board.id, "title": "New"}, content_type="application/json"
+    )
+    assert response.status_code == 201
+    new_item = WorkItem.objects.get(id=response.json()["id"])
+    assert new_item.backlog_position == 6
+    existing.refresh_from_db()
+    assert existing.backlog_position == 5  # untouched
+
+
+@pytest.mark.django_db
 def test_patch_cannot_change_sprint_directly(auth_client, board, status):
     item = WorkItem.objects.create(board=board, title="X", status=status, created_by=None)
     sprint = Sprint.objects.create(board=board, name="S", created_by=None)

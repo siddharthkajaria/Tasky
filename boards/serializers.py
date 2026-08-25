@@ -323,6 +323,18 @@ class WorkItemSerializer(serializers.ModelSerializer):
             # save() runs, to compute next_position() correctly.
             attrs["status"] = resolve_default_status(board.project)
 
+        if attrs.get("sprint") is not None:
+            # Same two rules /api/work-items/{id}/schedule/ enforces
+            # (boards/views.py's `schedule` action) — applied here too so a
+            # work item can't be created directly into another board's
+            # sprint, or into one that's already completed, bypassing
+            # schedule/ entirely.
+            sprint = attrs["sprint"]
+            if sprint.board_id != board.id:
+                raise serializers.ValidationError({"sprint": "Sprint must belong to this item's board."})
+            if sprint.state == Sprint.State.COMPLETED:
+                raise serializers.ValidationError({"sprint": "Can't schedule into a completed sprint."})
+
         if is_create or "custom_fields" in attrs:
             # On create, the check must run even when `custom_fields` is
             # omitted entirely (payload defaults to {}) — otherwise a
