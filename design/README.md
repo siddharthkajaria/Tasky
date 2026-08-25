@@ -18,6 +18,7 @@ prototype of the whole product, not a one-off mockup.
 | 4 — Labels | `../docs/superpowers/specs/2026-08-18-tasky-labels-design.md` | Signed off, **shipped to production** (`boards/models.py`) |
 | 2c — Bulk Operations & Import | `../docs/superpowers/specs/2026-08-24-tasky-bulk-import-design.md` | Signed off, **shipped to production** (`boards/views.py`, `boards/services.py`) |
 | 5 — Search | `../docs/superpowers/specs/2026-08-24-tasky-search-design.md` | Signed off, **shipped to production** (`boards/views.py`) |
+| 6 — Backlog & Sprints | `../docs/superpowers/specs/2026-08-24-tasky-backlog-sprints-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -173,6 +174,35 @@ Sign in as `asha`, `kabir` or `lena` — any password works.
     and submit. Then combine a text term with a facet to narrow further.
 33. **Search for something that matches nothing** — a clean "No matches"
     state, not an error.
+
+## Sub-project 6 — Backlog & Sprints
+
+34. **Open the Sprint Board and click "Backlog"** (top right). Sprint 14
+    is seeded ACTIVE with TASKY-2 and TASKY-3 in it; Sprint 15 is
+    PLANNED and empty; TASKY-1, TASKY-4 and TASKY-5 sit in the Backlog
+    section below, unscheduled.
+35. **Click one of Sprint 14's items** — the normal work item detail
+    modal opens, same as from the board.
+36. **Move a Backlog item into Sprint 15** via its "Move to" dropdown —
+    it disappears from Backlog and appears under Sprint 15, whose item
+    count updates.
+37. **Try to Start Sprint 15 while Sprint 14 is still active** — rejected,
+    naming Sprint 14 and asking you to complete it first. Only one
+    active sprint per board at a time.
+38. **Complete Sprint 14** — it's marked COMPLETED, its item list is
+    replaced with a note that its items returned to the backlog, and
+    TASKY-2/TASKY-3 reappear in the Backlog section.
+39. **Now Start Sprint 15** — succeeds, since no sprint is active
+    anymore; it's marked ACTIVE with a start date.
+40. **Add a new sprint** via the "+ Add sprint" form — appears PLANNED
+    with 0 items. **Try deleting a completed sprint** — no Delete button
+    is offered (only a planned sprint can be deleted); delete the new
+    empty planned one instead — it disappears.
+41. **Sign in as a plain Member of a project** (not Owner/Admin) and open
+    that project's Backlog page — the "+ Add sprint" form and every
+    Start/Complete/Delete button are hidden, but the sprint list, the
+    backlog list, and the "Move to" dropdown are all still fully usable —
+    scheduling a work item is a plain edit, not a manage-tier action.
 
 All state is in memory — refreshing the page resets it to the seed above.
 

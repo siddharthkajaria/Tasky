@@ -123,6 +123,8 @@ function route() {
   if (hash === '/search')  { setActiveNav('search');  return viewSearch(); }
 
   setActiveNav('projects');
+  const backlogMatch = hash.match(/^\/projects\/(\d+)\/boards\/(\d+)\/backlog$/);
+  if (backlogMatch) return viewBacklog(Number(backlogMatch[1]), Number(backlogMatch[2]));
   const boardMatch = hash.match(/^\/projects\/(\d+)\/boards\/(\d+)$/);
   if (boardMatch) return viewBoard(Number(boardMatch[1]), Number(boardMatch[2]));
   const m = hash.match(/^\/projects\/(\d+)$/);
@@ -1686,6 +1688,7 @@ async function viewBoard(projectId, boardId) {
   boardState.selectedIds = new Set();
 
   main.querySelector('[data-back-link]').href = `#/projects/${projectId}`;
+  main.querySelector('[data-backlog-link]').href = `#/projects/${projectId}/boards/${boardId}/backlog`;
   main.querySelector('[data-type-legend]').innerHTML = Logic.ITEM_TYPES.map(t =>
     `<span class="legend-item"><i class="type-dot type-${t}"></i>${Logic.ITEM_TYPE_LABEL[t]}</span>`
   ).join('');
@@ -1718,6 +1721,187 @@ async function reloadBoard() {
   const items = await Store.listBoardWorkItems(boardState.boardId);
   boardState.buckets = groupByStatus(items, boardState.statuses);
   paintColumns();
+}
+
+/* Backlog & Sprints (sub-project 6) ---------------------------------------
+   Sprint assignment is a second axis, orthogonal to status — this page is
+   the home for it, separate from the board's status columns. `boardState`
+   is populated the same way `viewBoard` does (minus `buckets`, since this
+   page doesn't render columns) so `openWorkItemModal` — opened from either
+   the backlog or a sprint's item list — has everything it needs, and its
+   `reloadBoard()` on save safely no-ops here since paintColumns() bails
+   out when `[data-columns]` isn't on the page. */
+
+async function viewBacklog(projectId, boardId) {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-backlog'));
+  boardState.projectId = projectId;
+  boardState.boardId = boardId;
+  boardState.selectMode = false;
+  boardState.selectedIds = new Set();
+
+  main.querySelector('[data-back-link]').href = `#/projects/${projectId}/boards/${boardId}`;
+
+  const sprintsEl = main.querySelector('[data-sprints]');
+  const backlogEl = main.querySelector('[data-backlog]');
+  const createForm = main.querySelector('[data-create-sprint]');
+  sprintsEl.innerHTML = skeletonList(2);
+  backlogEl.innerHTML = skeletonList(2);
+
+  let project, board, statuses, canManage;
+  try {
+    [project, board, statuses] = await Promise.all([
+      Store.getProject(projectId), Store.getBoard(boardId), Store.listStatuses(projectId),
+    ]);
+    canManage = Logic.canManageSprints(project.my_role);
+    boardState.statuses = statuses;
+    main.querySelector('[data-board-name]').textContent = board.name;
+  } catch (err) {
+    sprintsEl.innerHTML = ''; backlogEl.innerHTML = '';
+    handle(err);
+    location.hash = `#/projects/${projectId}/boards/${boardId}`;
+    return;
+  }
+
+  createForm.hidden = !canManage;
+  createForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nameInput = createForm.querySelector('[name=name]');
+    const goalInput = createForm.querySelector('[name=goal]');
+    if (!nameInput.value.trim()) return;
+    try {
+      await Store.createSprint(boardId, { name: nameInput.value, goal: goalInput.value });
+      nameInput.value = '';
+      goalInput.value = '';
+      await paintBacklogPage(boardId, canManage, sprintsEl, backlogEl);
+    } catch (err) { handle(err); }
+  });
+
+  await paintBacklogPage(boardId, canManage, sprintsEl, backlogEl);
+}
+
+async function paintBacklogPage(boardId, canManage, sprintsEl, backlogEl) {
+  sprintsEl.innerHTML = skeletonList(2);
+  backlogEl.innerHTML = skeletonList(2);
+  try {
+    const [allSprints, backlogItems] = await Promise.all([
+      Store.listSprints(boardId), Store.listBacklog(boardId),
+    ]);
+
+    if (!allSprints.length) {
+      sprintsEl.innerHTML = '<p class="empty">No sprints yet.</p>';
+    } else {
+      const cards = await Promise.all(
+        allSprints.map(s => sprintCard(s, boardId, canManage, sprintsEl, backlogEl, allSprints))
+      );
+      sprintsEl.replaceChildren(...cards);
+    }
+
+    if (!backlogItems.length) {
+      backlogEl.innerHTML = '<li class="empty">Nothing in the backlog.</li>';
+    } else {
+      const rows = backlogItems.map(item => backlogRow(item, boardId, allSprints, sprintsEl, backlogEl, canManage));
+      backlogEl.replaceChildren(...rows);
+      stagger(rows);
+    }
+  } catch (err) {
+    sprintsEl.innerHTML = '';
+    backlogEl.innerHTML = '';
+    handle(err);
+  }
+}
+
+async function sprintCard(sprint, boardId, canManage, sprintsEl, backlogEl, allSprints) {
+  const card = document.createElement('div');
+  card.className = `sprint-card sprint-${sprint.state}`;
+  const dates = [sprint.start_date, sprint.end_date].filter(Boolean).join(' → ');
+
+  card.innerHTML =
+    `<div class="sprint-head">` +
+      `<span class="sprint-name">${esc(sprint.name)}</span>` +
+      `<span class="sprint-state-badge state-${sprint.state}">${sprint.state}</span>` +
+      `<span class="row-meta">${sprint.item_count} item${sprint.item_count === 1 ? '' : 's'}${dates ? ' · ' + esc(dates) : ''}</span>` +
+      (canManage
+        ? `<span class="actions">` +
+            (sprint.state === 'planned' ? `<button class="btn" type="button" data-start>Start</button>` : '') +
+            (sprint.state === 'active' ? `<button class="btn" type="button" data-complete>Complete</button>` : '') +
+            (sprint.state === 'planned' ? `<button class="btn btn-danger" type="button" data-delete>Delete</button>` : '') +
+          `</span>`
+        : '') +
+    `</div>` +
+    (sprint.goal ? `<p class="sprint-goal">${esc(sprint.goal)}</p>` : '') +
+    `<ul class="sprint-items" data-items></ul>`;
+
+  const itemsEl = card.querySelector('[data-items]');
+  if (sprint.state === 'completed') {
+    itemsEl.innerHTML = '<li class="empty-inline">Completed — its items returned to the backlog.</li>';
+  } else {
+    try {
+      const items = await Store.listSprintWorkItems(sprint.id);
+      itemsEl.innerHTML = '';
+      if (!items.length) {
+        itemsEl.innerHTML = '<li class="empty-inline">Nothing scheduled yet.</li>';
+      } else {
+        itemsEl.replaceChildren(...items.map(item => backlogRow(item, boardId, allSprints, sprintsEl, backlogEl, canManage)));
+      }
+    } catch (err) { handle(err); }
+  }
+
+  const startBtn = card.querySelector('[data-start]');
+  if (startBtn) startBtn.addEventListener('click', async () => {
+    try {
+      await Store.startSprint(sprint.id);
+      await paintBacklogPage(boardId, canManage, sprintsEl, backlogEl);
+    } catch (err) { handle(err); }
+  });
+  const completeBtn = card.querySelector('[data-complete]');
+  if (completeBtn) completeBtn.addEventListener('click', async () => {
+    try {
+      await Store.completeSprint(sprint.id);
+      toast(`"${sprint.name}" completed`);
+      await paintBacklogPage(boardId, canManage, sprintsEl, backlogEl);
+    } catch (err) { handle(err); }
+  });
+  const deleteBtn = card.querySelector('[data-delete]');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    try {
+      await Store.deleteSprint(sprint.id);
+      await paintBacklogPage(boardId, canManage, sprintsEl, backlogEl);
+    } catch (err) { handle(err); }
+  });
+
+  return card;
+}
+
+function backlogRow(item, boardId, allSprints, sprintsEl, backlogEl, canManage) {
+  const li = document.createElement('li');
+  li.className = 'backlog-row';
+  const currentValue = item.sprint ? String(item.sprint) : 'backlog';
+  const options = [`<option value="backlog" ${currentValue === 'backlog' ? 'selected' : ''}>Backlog</option>`]
+    .concat(allSprints.filter(s => s.state !== 'completed').map(s =>
+      `<option value="${s.id}" ${currentValue === String(s.id) ? 'selected' : ''}>${esc(s.name)}</option>`
+    )).join('');
+
+  li.innerHTML =
+    `<a href="#" class="backlog-row-link" data-open>` +
+      `<span class="key-pill">${esc(item.key)}</span>` +
+      `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
+      `<span class="backlog-title">${esc(item.title)}</span>` +
+    `</a>` +
+    `<select class="move-select" aria-label="Move ${esc(item.key)}">${options}</select>`;
+
+  li.querySelector('[data-open]').addEventListener('click', (e) => {
+    e.preventDefault();
+    openWorkItemModal(item.id);
+  });
+  li.querySelector('select').addEventListener('change', async (e) => {
+    const value = e.target.value;
+    try {
+      await Store.scheduleWorkItem(item.id, { sprint: value === 'backlog' ? null : Number(value) });
+      await paintBacklogPage(boardId, canManage, sprintsEl, backlogEl);
+    } catch (err) { handle(err); }
+  });
+  return li;
 }
 
 function paintColumns() {

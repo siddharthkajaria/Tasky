@@ -95,11 +95,26 @@ const Store = (() => {
     return label;
   }
 
+  // Backlog & Sprints (sub-project 6) — declared ahead of the work item
+  // seed block below, same reason `labels` is: seeding needs to assign
+  // items directly into a sprint.
+  let sprints = [
+    {
+      id: id(), board: board1.id, name: 'Sprint 14', goal: 'Ship the redesigned onboarding flow',
+      state: 'active', start_date: '2026-08-11', end_date: null, created_by: 1,
+    },
+    {
+      id: id(), board: board1.id, name: 'Sprint 15', goal: '',
+      state: 'planned', start_date: null, end_date: null, created_by: 1,
+    },
+  ];
+
   let workItems = [];
   function seedItem(o) {
     const item = Object.assign({
       description: '', priority: 2, due_date: null, assignee: null,
       parent: null, position: 0, component_ids: [], label_ids: [], created_by: 1,
+      sprint: null, backlog_position: 0,
     }, o);
     workItems.push(item);
     return item;
@@ -111,6 +126,7 @@ const Store = (() => {
   const epic = seedItem({
     id: id(), key: 'TASKY-1', board: board1.id, item_type: 'epic',
     title: 'Redesign onboarding', status: taskyStatuses.inProgress.id, priority: 3, assignee: 1,
+    backlog_position: 0,
   });
   const lblNeedsDesign = seedLabel('needs-design');
   const lblUrgent = seedLabel('urgent');
@@ -119,20 +135,24 @@ const Store = (() => {
     id: id(), key: 'TASKY-2', board: board1.id, item_type: 'story', parent: epic.id,
     title: 'Design the welcome screen', status: taskyStatuses.todo.id, assignee: 3,
     component_ids: [components[0].id], label_ids: [lblNeedsDesign.id],
+    sprint: sprints[0].id, backlog_position: 0,
   });
   const task1 = seedItem({
     id: id(), key: 'TASKY-3', board: board1.id, item_type: 'task', parent: epic.id,
     title: 'Wire up the onboarding API', status: taskyStatuses.todo.id, assignee: 2,
     component_ids: [components[1].id],
+    sprint: sprints[0].id, backlog_position: 1,
   });
   seedItem({
     id: id(), key: 'TASKY-4', board: board1.id, item_type: 'subtask', parent: story1.id,
     title: 'Write the welcome copy', status: taskyStatuses.todo.id,
+    backlog_position: 1,
   });
   const bug1 = seedItem({
     id: id(), key: 'TASKY-5', board: board1.id, item_type: 'bug',
     title: 'Signup button misaligned on Safari', status: taskyStatuses.inProgress.id, priority: 3, assignee: 1,
     label_ids: [lblUrgent.id],
+    backlog_position: 2,
   });
 
   let links = [
@@ -479,6 +499,7 @@ const Store = (() => {
       children,
       components: components.filter(c => item.component_ids.includes(c.id)),
       labels_detail: (item.label_ids || []).map(lid => labels.find(l => l.id === lid)).filter(Boolean),
+      sprint_detail: item.sprint ? sprintSummary(item.sprint) : null,
     });
   }
 
@@ -1017,6 +1038,158 @@ const Store = (() => {
     workItemStatuses = workItemStatuses.filter(s => s.id !== status.id);
     renumber(statusesFor(status.project));
     return wait(null);
+  }
+
+  /* ---- backlog & sprints (sub-project 6) ---------------------------------
+     Sprint assignment is a second, independent axis from status — a work
+     item's status (workflow column) and its sprint (which iteration it's
+     committed to, or null for "in the backlog") never constrain each
+     other. Starting/completing/deleting a sprint is Owner/Admin-gated;
+     scheduling an item into or out of one is a plain edit any project
+     member can already do. `sprints` itself is declared earlier, ahead of
+     the work item seed block, so the seed can assign items into one
+     directly. */
+
+  function todayISO() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function requireSprintManager(projectId) {
+    if (!Logic.canManageSprints(myRole(projectId))) {
+      throw Object.assign(
+        new Error("You don't have permission to manage this board's sprints."), { status: 403 },
+      );
+    }
+  }
+
+  function sprintsFor(boardId) {
+    return sprints.filter(s => s.board === Number(boardId));
+  }
+
+  function decorateSprint(sprint) {
+    return Object.assign({}, sprint, {
+      item_count: workItems.filter(w => w.sprint === sprint.id).length,
+    });
+  }
+
+  function sprintSummary(sprintId) {
+    const sprint = sprints.find(s => s.id === sprintId);
+    return sprint ? { id: sprint.id, name: sprint.name, state: sprint.state } : null;
+  }
+
+  function listSprints(boardId) {
+    const board = boards.find(b => b.id === Number(boardId));
+    if (!board) return fail(404, 'Not found.');
+    try { requireMember(board.project); } catch (err) { return Promise.reject(err); }
+    return wait(sprintsFor(boardId).map(decorateSprint));
+  }
+
+  function createSprint(boardId, { name, goal }) {
+    const board = boards.find(b => b.id === Number(boardId));
+    if (!board) return fail(404, 'Not found.');
+    try { requireSprintManager(board.project); } catch (err) { return Promise.reject(err); }
+    if (!name || !name.trim()) return fail(400, 'This field may not be blank.');
+    const sprint = {
+      id: id(), board: board.id, name: name.trim(), goal: (goal || '').trim(),
+      state: 'planned', start_date: null, end_date: null, created_by: me.id,
+    };
+    sprints.push(sprint);
+    return wait(decorateSprint(sprint));
+  }
+
+  function updateSprint(sprintId, { name, goal }) {
+    const sprint = sprints.find(s => s.id === Number(sprintId));
+    if (!sprint) return fail(404, 'Not found.');
+    try { requireSprintManager(boardProjectId(sprint.board)); } catch (err) { return Promise.reject(err); }
+    if (name !== undefined) {
+      if (!name.trim()) return fail(400, 'This field may not be blank.');
+      sprint.name = name.trim();
+    }
+    if (goal !== undefined) sprint.goal = goal.trim();
+    return wait(decorateSprint(sprint));
+  }
+
+  function startSprint(sprintId) {
+    const sprint = sprints.find(s => s.id === Number(sprintId));
+    if (!sprint) return fail(404, 'Not found.');
+    try { requireSprintManager(boardProjectId(sprint.board)); } catch (err) { return Promise.reject(err); }
+    if (sprint.state !== 'planned') return fail(400, 'Only a planned sprint can be started.');
+    const alreadyActive = sprintsFor(sprint.board).find(s => s.state === 'active');
+    if (alreadyActive) return fail(400, `"${alreadyActive.name}" is already active on this board. Complete it first.`);
+    sprint.state = 'active';
+    sprint.start_date = todayISO();
+    return wait(decorateSprint(sprint));
+  }
+
+  function completeSprint(sprintId) {
+    const sprint = sprints.find(s => s.id === Number(sprintId));
+    if (!sprint) return fail(404, 'Not found.');
+    try { requireSprintManager(boardProjectId(sprint.board)); } catch (err) { return Promise.reject(err); }
+    if (sprint.state !== 'active') return fail(400, 'Only an active sprint can be completed.');
+    sprint.state = 'completed';
+    sprint.end_date = todayISO();
+    let next = nextBacklogPosition(sprint.board, null);
+    workItems.filter(w => w.sprint === sprint.id).forEach(w => {
+      w.sprint = null;
+      w.backlog_position = next++;
+    });
+    return wait(decorateSprint(sprint));
+  }
+
+  function deleteSprint(sprintId) {
+    const sprint = sprints.find(s => s.id === Number(sprintId));
+    if (!sprint) return fail(404, 'Not found.');
+    try { requireSprintManager(boardProjectId(sprint.board)); } catch (err) { return Promise.reject(err); }
+    if (sprint.state !== 'planned') return fail(400, 'Only a planned sprint can be deleted.');
+    const inUse = workItems.filter(w => w.sprint === sprint.id);
+    if (inUse.length) {
+      return fail(400, `Still has ${inUse.length} work item${inUse.length === 1 ? '' : 's'} scheduled into it. Move ${inUse.length === 1 ? 'it' : 'them'} first.`);
+    }
+    sprints = sprints.filter(s => s.id !== sprint.id);
+    return wait(null);
+  }
+
+  function nextBacklogPosition(boardId, sprintId) {
+    const siblings = workItems.filter(w => w.board === Number(boardId) && w.sprint === sprintId);
+    return siblings.length ? Math.max(...siblings.map(w => w.backlog_position)) + 1 : 0;
+  }
+
+  function listBacklog(boardId) {
+    const board = boards.find(b => b.id === Number(boardId));
+    if (!board) return fail(404, 'Not found.');
+    try { requireMember(board.project); } catch (err) { return Promise.reject(err); }
+    const items = workItems.filter(w => w.board === board.id && w.sprint === null)
+      .sort((a, b) => a.backlog_position - b.backlog_position)
+      .map(decorateWorkItem);
+    return wait(items);
+  }
+
+  function listSprintWorkItems(sprintId) {
+    const sprint = sprints.find(s => s.id === Number(sprintId));
+    if (!sprint) return fail(404, 'Not found.');
+    try { requireMember(boardProjectId(sprint.board)); } catch (err) { return Promise.reject(err); }
+    const items = workItems.filter(w => w.sprint === sprint.id)
+      .sort((a, b) => a.backlog_position - b.backlog_position)
+      .map(decorateWorkItem);
+    return wait(items);
+  }
+
+  function scheduleWorkItem(itemId, { sprint }) {
+    const item = workItems.find(w => w.id === Number(itemId));
+    if (!item) return fail(404, 'Not found.');
+    try { requireMember(boardProjectId(item.board)); } catch (err) { return Promise.reject(err); }
+
+    let targetSprintId = null;
+    if (sprint !== null && sprint !== undefined && sprint !== '') {
+      const target = sprints.find(s => s.id === Number(sprint));
+      if (!target) return fail(400, 'Sprint not found.');
+      if (target.board !== item.board) return fail(400, 'Sprint must belong to the same board.');
+      if (target.state === 'completed') return fail(400, "Can't schedule into a completed sprint.");
+      targetSprintId = target.id;
+    }
+    item.sprint = targetSprintId;
+    item.backlog_position = nextBacklogPosition(item.board, targetSprintId);
+    return wait(decorateWorkItem(item));
   }
 
   /* ---- labels (sub-project 4) -------------------------------------------
@@ -1671,6 +1844,8 @@ const Store = (() => {
     search,
     listComponents, createComponent, renameComponent, deleteComponent,
     listStatuses, createStatus, updateStatus, moveStatus, deleteStatus,
+    listSprints, createSprint, updateSprint, startSprint, completeSprint, deleteSprint,
+    listBacklog, listSprintWorkItems, scheduleWorkItem,
     listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
     listLinks, createLink, deleteLink,
     listUsers,

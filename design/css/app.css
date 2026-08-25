@@ -277,6 +277,72 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .search-title { flex: 1; font-size: 13px; }
 .search-meta { font-size: 11px; color: var(--ink-3); }
 
+/* Backlog & Sprints (sub-project 6) --------------------------------------- */
+
+.section-row { display: flex; align-items: center; justify-content: space-between; }
+
+.create-sprint[hidden] { display: none; }
+.create-sprint { display: flex; gap: 8px; margin: 10px 0 16px; }
+.create-sprint input {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.create-sprint input[name="name"] { flex: 0 0 200px; }
+.create-sprint input[name="goal"] { flex: 1; }
+
+.sprint-list { display: grid; gap: 12px; margin-bottom: 24px; }
+.sprint-card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 12px 16px;
+}
+.sprint-card.sprint-active { border-left-color: var(--accent); }
+.sprint-card.sprint-completed { opacity: .7; }
+
+.sprint-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sprint-name { font-weight: 600; font-size: 14px; }
+.sprint-state-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--sunk);
+  color: var(--ink-3);
+}
+.sprint-state-badge.state-active { background: var(--accent-w); color: var(--accent); }
+.sprint-goal { color: var(--ink-2); font-size: 12.5px; margin: 6px 0 0; }
+
+.sprint-items { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--rule); display: grid; gap: 6px; }
+
+.backlog-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.backlog-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 7px 12px;
+  animation: row-in .22s cubic-bezier(.2, .8, .2, 1) both;
+}
+.backlog-row-link { flex: 1; display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); min-width: 0; }
+.backlog-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.move-select {
+  background: var(--sunk);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 4px 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 /* Modal ----------------------------------------------------------------- */
 
 .scrim {
@@ -484,6 +550,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* Boards list on the project page --------------------------------------- */
 
+.create-board[hidden], .create-component[hidden] { display: none; }
 .create-board, .create-component { display: flex; gap: 8px; margin: 0 0 10px; }
 .create-board input, .create-component input {
   flex: 1;
@@ -853,6 +920,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
    chip-check as the components picker — so the admin screens read as part
    of the app rather than a separate settings product. */
 
+.create-field[hidden], .create-screen[hidden], .create-status[hidden] { display: none; }
 .create-field, .create-screen, .create-status { display: flex; gap: 8px; margin: 0 0 8px; }
 .create-field input, .create-screen input, .create-status input {
   flex: 1;
@@ -1049,6 +1117,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   margin-left: 4px;
 }
 
+.field-error[hidden] { display: none; }
 .field-error {
   display: block;
   color: var(--danger);

@@ -149,12 +149,43 @@
       </div>
       <div class="board-head-actions">
         <p class="legend" data-type-legend></p>
+        <a class="btn" data-backlog-link>Backlog</a>
         <button class="btn" type="button" data-select-toggle>Select</button>
         <button class="btn" type="button" data-import-btn>Import</button>
       </div>
     </div>
     <div class="bulk-bar" data-bulk-bar hidden></div>
     <div class="columns" data-columns></div>
+  </div>
+</template>
+
+<template id="tpl-backlog">
+  <div class="page">
+    <div class="board-head">
+      <div>
+        <a class="back" data-back-link href="#/projects">Board</a>
+        <h1 data-board-name></h1>
+        <p class="page-sub">Backlog &amp; Sprints</p>
+      </div>
+    </div>
+
+    <section>
+      <div class="section-row">
+        <h2 class="section-label">Sprints</h2>
+      </div>
+      <form class="create-sprint" data-create-sprint novalidate hidden>
+        <input name="name" placeholder="Sprint name" aria-label="Sprint name" required>
+        <input name="goal" placeholder="Goal (optional)" aria-label="Goal">
+        <button class="btn" type="submit">Add sprint</button>
+      </form>
+      <div class="sprint-list" data-sprints></div>
+    </section>
+
+    <section>
+      <h2 class="section-label">Backlog</h2>
+      <p class="page-sub" style="margin-bottom:10px">Not scheduled into any sprint.</p>
+      <ul class="backlog-list" data-backlog></ul>
+    </section>
   </div>
 </template>
 

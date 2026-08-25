@@ -59,6 +59,13 @@ const Logic = (() => {
 
   const canManageStatuses = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Backlog & Sprints (sub-project 6) -------------------------------- */
+
+  // Starting/completing/deleting a sprint is Owner/Admin, same tier as
+  // Statuses/Components — scheduling a work item into or out of a sprint
+  // is a plain edit any project member can already do, no separate check.
+  const canManageSprints = (role) => role === 'owner' || role === 'admin';
+
   /* ---- Custom fields & screens (sub-project 2b) ------------------------ */
 
   // The spec's fixed set. No custom types, and a field's type is immutable
@@ -191,7 +198,7 @@ const Logic = (() => {
     canTransferOwnership, canDeleteProject, canLeave,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
     requiresParent, canHaveParent, isValidParent, canManageComponents,
-    CATEGORIES, CATEGORY_LABELS, canManageStatuses,
+    CATEGORIES, CATEGORY_LABELS, canManageStatuses, canManageSprints,
     FIELD_TYPES, FIELD_TYPE_LABEL, FIELD_TYPE_HINT,
     fieldHasOptions, isMultiValue,
     canManageDefinitions, canManageScreenAssignments,
