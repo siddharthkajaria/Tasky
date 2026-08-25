@@ -922,12 +922,12 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .modal-actions .btn-danger { margin-left: auto; }
 
-.custom-fields-block, .components-block, .labels-block, .children-block, .links-block {
+.custom-fields-block, .components-block, .labels-block, .children-block, .links-block, .attachments-block {
   margin-top: 18px;
   border-top: 1px solid var(--rule);
   padding-top: 14px;
 }
-.custom-fields-block h2, .components-block h2, .labels-block h2, .children-block h2, .links-block h2 {
+.custom-fields-block h2, .components-block h2, .labels-block h2, .children-block h2, .links-block h2, .attachments-block h2 {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: .12em;
@@ -996,6 +996,39 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .link-row .btn-danger { padding: 2px 8px; font-size: 11px; }
 
 .empty-inline { color: var(--ink-3); font-size: 12.5px; }
+
+/* Attachments (sub-project 8) --------------------------------------------- */
+
+.attachment-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--sunk);
+  border-radius: var(--r);
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+.attachment-ext {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  color: var(--ink-3);
+  border: 1px solid var(--rule-2);
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+.attachment-name { font-weight: 500; }
+.attachment-meta { margin-left: auto; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+.attachment-row .btn-quiet, .attachment-row .btn-danger { padding: 2px 8px; font-size: 11px; }
+
+.attachment-form { display: flex; gap: 8px; align-items: center; }
+.attachment-form input[type=file] {
+  flex: 1;
+  font-size: 12px;
+  color: var(--ink-2);
+}
 
 /* Custom fields & screens (sub-project 2b) -------------------------------
    Deliberately built from the pieces already here — the same row shell as

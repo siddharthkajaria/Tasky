@@ -41,6 +41,34 @@ function errorText(err) {
   return (err && err.message) || 'Something went wrong.';
 }
 
+/* Attachments (sub-project 8) --------------------------------------------- */
+
+// Human-readable size, e.g. "245 KB" — matches the units the browser's own
+// File.size already comes in (bytes), no unit chosen at upload time.
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
+// A short uppercase badge from the filename's extension — the spec allows
+// suggesting an icon by content_type but rejects nothing by type, so this
+// is decoration only, never a validation signal.
+function fileExtBadge(filename) {
+  const m = /\.([a-zA-Z0-9]+)$/.exec(filename || '');
+  return m ? m[1].slice(0, 4).toUpperCase() : 'FILE';
+}
+
+// Real file bytes only exist as long as this tab does — there's no backend
+// to persist them to. Attachments uploaded this session get a real,
+// briefly-downloadable object URL; seeded ones don't, since no real File
+// object was ever picked for them. Keyed by attachment id.
+const attachmentBlobUrls = new Map();
+
 function handle(err) { toast(errorText(err), true); }
 
 /* Skeletons -------------------------------------------------------------- */
@@ -2559,6 +2587,16 @@ async function openWorkItemModal(itemId) {
       <h2>Related items</h2>
       <ul class="link-list" data-links><li class="loading">Loading…</li></ul>
       <button class="btn" type="button" data-add-link>+ Link an item</button>
+    </div>
+
+    <div class="attachments-block">
+      <h2>Attachments</h2>
+      <ul class="attachment-list" data-attachments><li class="loading">Loading…</li></ul>
+      <form class="attachment-form" data-attachment-form>
+        <input type="file" name="file" data-attachment-file aria-label="Choose a file to upload">
+        <button class="btn" type="submit">Upload</button>
+      </form>
+      <p class="form-error" data-attachment-error hidden></p>
     </div>`;
 
   const { modal, close } = openModal(body);
@@ -2625,6 +2663,99 @@ async function openWorkItemModal(itemId) {
 
   loadLinks(item, modal);
   modal.querySelector('[data-add-link]').addEventListener('click', () => openLinkModal(item, modal));
+
+  // Delete permission is per-attachment (uploader OR Owner/Admin), not a
+  // single section-wide flag like Components/Releases get — but it still
+  // needs "my role on this item's project", which `members` (already
+  // fetched above) already carries without a second network call.
+  const myMembership = members.find(m => m.user === me.id);
+  const myRole = myMembership ? myMembership.role : null;
+
+  loadAttachments(item, modal, myRole);
+
+  const attachmentForm = modal.querySelector('[data-attachment-form]');
+  attachmentForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = modal.querySelector('[data-attachment-file]');
+    const attachmentError = modal.querySelector('[data-attachment-error]');
+    attachmentError.hidden = true;
+    const file = fileInput.files[0];
+    if (!file) {
+      attachmentError.textContent = 'Choose a file first.';
+      attachmentError.hidden = false;
+      return;
+    }
+    const submitBtn = attachmentForm.querySelector('button');
+    submitBtn.disabled = true;
+    try {
+      const created = await Store.uploadAttachment(item.id, {
+        filename: file.name, content_type: file.type, size: file.size,
+      });
+      // Real bytes, straight from the picked File — briefly downloadable
+      // again in this tab, per the spec's "no real storage needed" note.
+      attachmentBlobUrls.set(created.id, URL.createObjectURL(file));
+      attachmentForm.reset();
+      toast('Uploaded');
+      loadAttachments(item, modal, myRole);
+    } catch (err) {
+      attachmentError.textContent = errorText(err);
+      attachmentError.hidden = false;
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+async function loadAttachments(item, modal, myRole) {
+  const list = modal.querySelector('[data-attachments]');
+  try {
+    const rows = await Store.listAttachments(item.id);
+    if (!rows.length) {
+      list.innerHTML = '<li class="empty-inline">No attachments yet.</li>';
+      return;
+    }
+    list.replaceChildren(...rows.map(a => attachmentRow(a, item, modal, myRole)));
+  } catch (err) {
+    list.innerHTML = '';
+    handle(err);
+  }
+}
+
+function attachmentRow(a, item, modal, myRole) {
+  const li = document.createElement('li');
+  li.className = 'attachment-row';
+  const uploader = a.uploaded_by_detail
+    ? esc(a.uploaded_by_detail.display_name || a.uploaded_by_detail.username)
+    : 'Deleted user';
+  const canDelete = Logic.canDeleteAttachment(a.uploaded_by, me.id, myRole);
+  const blobUrl = attachmentBlobUrls.get(a.id);
+
+  li.innerHTML =
+    `<span class="attachment-ext">${esc(fileExtBadge(a.filename))}</span>` +
+    `<span class="attachment-name">${esc(a.filename)}</span>` +
+    `<span class="attachment-meta">${esc(formatBytes(a.size))} · ${uploader} · ${esc(String(a.uploaded_at).slice(0, 10))}</span>` +
+    (blobUrl
+      ? `<a class="btn btn-quiet" href="${blobUrl}" download="${esc(a.filename)}" data-download>Download</a>`
+      : `<button class="btn btn-quiet" type="button" data-download>Download</button>`) +
+    (canDelete ? `<button class="btn btn-danger" type="button" data-delete-attachment>Delete</button>` : '');
+
+  if (!blobUrl) {
+    li.querySelector('[data-download]').addEventListener('click', () => {
+      toast("This is seed data — no real file behind it in this prototype.");
+    });
+  }
+  const delBtn = li.querySelector('[data-delete-attachment]');
+  if (delBtn) {
+    delBtn.addEventListener('click', async () => {
+      try {
+        await Store.deleteAttachment(a.id);
+        attachmentBlobUrls.delete(a.id);
+        toast('Attachment deleted');
+        loadAttachments(item, modal, myRole);
+      } catch (err) { handle(err); }
+    });
+  }
+  return li;
 }
 
 async function loadLinks(item, modal) {

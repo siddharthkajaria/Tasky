@@ -76,6 +76,23 @@ const Logic = (() => {
   const RELEASE_STATUS_LABEL = { unreleased: 'Unreleased', released: 'Released', archived: 'Archived' };
   const canManageReleases = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Attachments (sub-project 8) --------------------------------------
+     Wider than Comment's author-only-unless-account-gone rule: the
+     uploader can always delete their own upload, AND an Owner/Admin of the
+     work item's project can delete anyone's — an attachment reads as
+     shared project property (a spec doc, a screenshot everyone needs)
+     rather than a personal remark. This is the one permission check in
+     this file that isn't purely role-based — it also needs to compare
+     against a specific record's `uploaded_by` — but it stays here rather
+     than inline in store.js because it's still a pure rule with no DOM or
+     network involved, same as everything else in this file. */
+  function canDeleteAttachment(uploadedBy, actingUserId, actingRole) {
+    if (uploadedBy !== null && uploadedBy !== undefined && Number(uploadedBy) === Number(actingUserId)) {
+      return true;
+    }
+    return actingRole === 'owner' || actingRole === 'admin';
+  }
+
   /* ---- Custom fields & screens (sub-project 2b) ------------------------ */
 
   // The spec's fixed set. No custom types, and a field's type is immutable
@@ -210,6 +227,7 @@ const Logic = (() => {
     requiresParent, canHaveParent, isValidParent, canManageComponents,
     CATEGORIES, CATEGORY_LABELS, canManageStatuses, canManageSprints,
     RELEASE_STATUSES, RELEASE_STATUS_LABEL, canManageReleases,
+    canDeleteAttachment,
     FIELD_TYPES, FIELD_TYPE_LABEL, FIELD_TYPE_HINT,
     fieldHasOptions, isMultiValue,
     canManageDefinitions, canManageScreenAssignments,

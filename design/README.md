@@ -20,6 +20,7 @@ prototype of the whole product, not a one-off mockup.
 | 5 — Search | `../docs/superpowers/specs/2026-08-24-tasky-search-design.md` | Signed off, **shipped to production** (`boards/views.py`) |
 | 6 — Backlog & Sprints | `../docs/superpowers/specs/2026-08-24-tasky-backlog-sprints-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/services.py`) |
 | 7 — Releases | `../docs/superpowers/specs/2026-08-24-tasky-releases-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
+| 8 — Task Detail UX | `../docs/superpowers/specs/2026-08-24-tasky-task-detail-ux-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -289,3 +290,31 @@ All state is in memory — refreshing the page resets it to the seed above.
   restricted too?
 - Anything from the spec's data model or flows that reads wrong once
   you're actually clicking it, rather than reading it.
+
+## Sub-project 8 — Task Detail UX
+
+50. **Open the Sprint Board and open `TASKY-1`** (the Epic). Scroll to the
+    new **Attachments** section at the bottom of the modal — seeded with
+    `spec.pdf`, uploaded by Asha. `TASKY-5` (the Bug) carries
+    `screenshot.png` from Kabir, and `TASKY-3` (the Task) carries
+    `design-notes.docx` from Lena — three different uploaders, on purpose,
+    so every delete-permission case below is visible from the seed alone.
+51. **Upload a file** via the picker at the bottom of the section, then
+    Upload — it appears immediately with its real name, a human-readable
+    size (e.g. "245 KB"), your name as uploader, and today's date, all read
+    straight off the browser's own `File` object rather than typed in.
+52. **Click Download on the file you just uploaded** — it's the real file,
+    briefly downloadable again in this tab. **Click Download on a seeded
+    example instead** (e.g. `spec.pdf`) — a toast explains there's no real
+    file behind seed data in this prototype, since no bytes were ever
+    actually picked for it.
+53. **Sign in as `lena`** (a plain member of Tasky Redesign, not Owner or
+    Admin) and open `TASKY-1` again — she can see `spec.pdf` but there's no
+    Delete button on it, since she's neither its uploader (Asha) nor an
+    Owner/Admin. Open `TASKY-3` instead, where she *is* the uploader
+    (`design-notes.docx`) — Delete is there.
+54. **Sign back in as `asha`** (Owner of Tasky Redesign) and open
+    `TASKY-5` — `screenshot.png` was uploaded by Kabir, not Asha, but
+    Delete still shows: an Owner/Admin can remove anyone's attachment, a
+    deliberately wider rule than Comments get elsewhere in this tool.
+    Delete it — gone immediately, with a confirmation toast.

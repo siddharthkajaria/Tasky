@@ -37,6 +37,13 @@ const Store = (() => {
     { id: id(), project: 3, user: 2, role: 'admin' },
     { id: id(), project: 3, user: 1, role: 'member' },  // Asha is a plain member of Client Portal
     { id: id(), project: 4, user: 3, role: 'owner' },
+    // Attachments (sub-project 8): Lena as a plain member of Tasky Redesign
+    // gives that project — the one with actual seeded work items — a
+    // non-Owner/non-Admin user to exercise "uploader-or-manager-tier can
+    // delete" against. Without this, project 1 only has Owner (Asha) and
+    // Admin (Kabir), which can't show the "plain member, not the uploader,
+    // gets refused" case at all.
+    { id: id(), project: 1, user: 3, role: 'member' },
   ];
 
   let invitations = [
@@ -177,6 +184,28 @@ const Store = (() => {
       id: id(),
       item_a: Math.min(task1.id, bug1.id), item_b: Math.max(task1.id, bug1.id),
       created_by: 1, created_at: new Date().toISOString(),
+    },
+  ];
+
+  // Attachments (sub-project 8) seed data ----------------------------------
+  // One on the Epic (uploaded by Asha, Owner), one on the Bug (uploaded by
+  // Kabir, Admin), one on a Task (uploaded by Lena, plain member) — enough
+  // to walk through "uploader deletes their own", "a different plain
+  // member can't delete someone else's", and "Owner/Admin deletes anyone's"
+  // straight from the seed, without uploading anything first.
+  let attachments = [
+    {
+      id: id(), work_item: epic.id, filename: 'spec.pdf', content_type: 'application/pdf',
+      size: 482331, uploaded_by: 1, uploaded_at: '2026-08-10T09:14:00.000Z',
+    },
+    {
+      id: id(), work_item: bug1.id, filename: 'screenshot.png', content_type: 'image/png',
+      size: 128744, uploaded_by: 2, uploaded_at: '2026-08-16T14:02:00.000Z',
+    },
+    {
+      id: id(), work_item: task1.id, filename: 'design-notes.docx',
+      content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 20548, uploaded_by: 3, uploaded_at: '2026-08-17T11:30:00.000Z',
     },
   ];
 
@@ -683,6 +712,7 @@ const Store = (() => {
     workItems = workItems.filter(w => w.id !== item.id);
     links = links.filter(l => l.item_a !== item.id && l.item_b !== item.id);
     workItemFieldValues = workItemFieldValues.filter(v => v.work_item !== item.id);
+    attachments = attachments.filter(a => a.work_item !== item.id);
     return wait(null);
   }
 
@@ -744,6 +774,7 @@ const Store = (() => {
       workItems = workItems.filter(w => w.id !== item.id);
       links = links.filter(l => l.item_a !== item.id && l.item_b !== item.id);
       workItemFieldValues = workItemFieldValues.filter(v => v.work_item !== item.id);
+      attachments = attachments.filter(a => a.work_item !== item.id);
       deleted.push(itemId);
     });
     return wait({ deleted, failed });
@@ -1475,6 +1506,63 @@ const Store = (() => {
     return wait(null);
   }
 
+  /* ---- attachments (sub-project 8) ----------------------------------------
+     Any project member can list/upload/download; delete is wider than
+     Comment's author-only-unless-account-gone rule — the uploader can
+     delete their own, and an Owner/Admin of the work item's project can
+     delete anyone's (Logic.canDeleteAttachment, mirroring the shape of
+     Comment's inline author check in ../../ui/static/js/store.js but with
+     the manager-tier allowance this spec calls for). There's no real file
+     storage in this mock — only the metadata a real API would also expose
+     (filename/content_type/size/uploaded_by/uploaded_at); the actual bytes
+     live only in the browser's File object for as long as the tab that
+     picked them stays open, which app.js handles via an object URL. */
+
+  const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25 MB, per spec
+
+  function decorateAttachment(a) {
+    return Object.assign({}, a, { uploaded_by_detail: a.uploaded_by ? userById(a.uploaded_by) : null });
+  }
+
+  function listAttachments(itemId) {
+    const item = workItems.find(w => w.id === Number(itemId));
+    if (!item) return fail(404, 'Not found.');
+    try { requireMember(boardProjectId(item.board)); } catch (err) { return Promise.reject(err); }
+    return wait(
+      attachments.filter(a => a.work_item === item.id)
+        .sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at))
+        .map(decorateAttachment)
+    );
+  }
+
+  function uploadAttachment(itemId, { filename, content_type, size }) {
+    const item = workItems.find(w => w.id === Number(itemId));
+    if (!item) return fail(404, 'Not found.');
+    try { requireMember(boardProjectId(item.board)); } catch (err) { return Promise.reject(err); }
+    if (!filename || !size) return fail(400, 'A file is required.');
+    if (size > MAX_ATTACHMENT_SIZE) return fail(400, 'File exceeds the 25 MB limit.');
+    const attachment = {
+      id: id(), work_item: item.id, filename,
+      content_type: content_type || 'application/octet-stream',
+      size, uploaded_by: me.id, uploaded_at: new Date().toISOString(),
+    };
+    attachments.push(attachment);
+    return wait(decorateAttachment(attachment));
+  }
+
+  function deleteAttachment(attachmentId) {
+    const attachment = attachments.find(a => a.id === Number(attachmentId));
+    if (!attachment) return fail(404, 'Not found.');
+    const item = workItems.find(w => w.id === attachment.work_item);
+    const projectId = item ? boardProjectId(item.board) : null;
+    try { requireMember(projectId); } catch (err) { return Promise.reject(err); }
+    if (!Logic.canDeleteAttachment(attachment.uploaded_by, me.id, myRole(projectId))) {
+      return fail(403, "You can only delete your own attachments, unless you're an Owner or Admin of this project.");
+    }
+    attachments = attachments.filter(a => a.id !== attachment.id);
+    return wait(null);
+  }
+
   /* ---- custom fields & screens (sub-project 2b) --------------------------
 
      CustomField and Screen are global: any project Owner manages them, and
@@ -1996,6 +2084,7 @@ const Store = (() => {
     listReleases, createRelease, updateRelease, deleteRelease, listReleaseWorkItems,
     listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
     listLinks, createLink, deleteLink,
+    listAttachments, uploadAttachment, deleteAttachment,
     listUsers,
     getMyCapabilities, listFieldTypes,
     listFields, getField, createField, renameField, changeFieldType, deleteField,
