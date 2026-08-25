@@ -24,6 +24,7 @@ from .serializers import (
     MoveWorkItemSerializer,
     ScreenFieldSerializer,
     ScreenSerializer,
+    SearchResultSerializer,
     WorkItemLinkSerializer,
     WorkItemSerializer,
     WorkItemSummarySerializer,
@@ -663,6 +664,102 @@ class ProjectScreenAssignmentsView(APIView):
                     )
 
         return Response(self._serialize(project))
+
+
+class SearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        params = request.query_params
+        q = (params.get("q") or "").strip()
+        facet_keys = ["item_type", "status_category", "priority", "assignee", "component", "label", "project"]
+        has_facet = any(params.get(key) for key in facet_keys)
+        if not q and not has_facet:
+            raise ValidationError({"detail": "Provide a search term or at least one filter."})
+        if q and len(q) < 2:
+            raise ValidationError({"q": "Must be at least 2 characters."})
+
+        my_project_ids = set(
+            ProjectMembership.objects.filter(user=request.user).values_list("project_id", flat=True)
+        )
+        qs = WorkItem.objects.filter(board__project_id__in=my_project_ids).select_related(
+            "board__project", "assignee", "status"
+        )
+
+        project_param = params.get("project")
+        if project_param:
+            project_id = self._as_int(project_param, "project")
+            if project_id not in my_project_ids:
+                raise ValidationError({"project": "Not a project you belong to."})
+            qs = qs.filter(board__project_id=project_id)
+
+        item_type = params.get("item_type")
+        if item_type:
+            if item_type not in WorkItem.ItemType.values:
+                raise ValidationError({"item_type": "Invalid item type."})
+            qs = qs.filter(item_type=item_type)
+
+        status_category = params.get("status_category")
+        if status_category:
+            if status_category not in WorkItemStatus.Category.values:
+                raise ValidationError({"status_category": "Invalid category."})
+            qs = qs.filter(status__category=status_category)
+
+        priority = params.get("priority")
+        if priority:
+            priority = self._as_int(priority, "priority")
+            if priority not in (1, 2, 3):
+                raise ValidationError({"priority": "Must be 1, 2, or 3."})
+            qs = qs.filter(priority=priority)
+
+        assignee = params.get("assignee")
+        if assignee:
+            assignee_id = self._as_int(assignee, "assignee")
+            from django.contrib.auth import get_user_model
+
+            if not get_user_model().objects.filter(pk=assignee_id).exists():
+                raise ValidationError({"assignee": "User not found."})
+            qs = qs.filter(assignee_id=assignee_id)
+
+        component_param = params.get("component")
+        if component_param:
+            component_id = self._as_int(component_param, "component")
+            component = Component.objects.filter(pk=component_id).first()
+            if not component or component.project_id not in my_project_ids:
+                raise ValidationError({"component": "Component not found."})
+            qs = qs.filter(components__id=component_id)
+
+        label_param = params.get("label")
+        if label_param:
+            if label_param.isdigit():
+                label = Label.objects.filter(pk=int(label_param)).first()
+            else:
+                label = Label.objects.filter(name__iexact=label_param).first()
+            if not label:
+                raise ValidationError({"label": "Label not found."})
+            qs = qs.filter(labels__id=label.id)
+
+        qs = qs.distinct()
+
+        if q:
+            tier1 = qs.filter(models.Q(key__icontains=q) | models.Q(title__icontains=q))
+            tier1_ids = list(tier1.order_by("-updated_at", "-id")[:50].values_list("id", flat=True))
+            results = list(tier1.filter(id__in=tier1_ids))
+            results.sort(key=lambda item: tier1_ids.index(item.id))
+            remaining = 50 - len(results)
+            if remaining > 0:
+                tier2 = qs.filter(description__icontains=q).exclude(id__in=tier1_ids)
+                results += list(tier2.order_by("-updated_at", "-id")[:remaining])
+        else:
+            results = list(qs.order_by("-updated_at", "-id")[:50])
+
+        return Response({"results": SearchResultSerializer(results, many=True).data})
+
+    def _as_int(self, value, field_name):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise ValidationError({field_name: "Must be an integer."})
 
 
 class CustomFieldViewSet(viewsets.ModelViewSet):

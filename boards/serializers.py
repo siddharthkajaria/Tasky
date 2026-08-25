@@ -190,6 +190,28 @@ class WorkItemSummarySerializer(serializers.ModelSerializer):
         fields = ["id", "key", "title", "item_type", "status", "status_detail"]
 
 
+class SearchResultSerializer(serializers.ModelSerializer):
+    status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
+    assignee_detail = UserSerializer(source="assignee", read_only=True)
+    priority_label = serializers.CharField(source="get_priority_display", read_only=True)
+    project = serializers.SerializerMethodField()
+    board = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WorkItem
+        fields = [
+            "id", "key", "title", "item_type", "status_detail",
+            "priority", "priority_label", "assignee_detail",
+            "project", "board", "updated_at",
+        ]
+
+    def get_project(self, obj):
+        return {"id": obj.board.project_id, "key": obj.board.project.key, "name": obj.board.project.name}
+
+    def get_board(self, obj):
+        return {"id": obj.board_id, "name": obj.board.name}
+
+
 class WorkItemSerializer(serializers.ModelSerializer):
     assignee_detail = UserSerializer(source="assignee", read_only=True)
     created_by = UserSerializer(read_only=True)

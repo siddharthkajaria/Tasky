@@ -11,6 +11,7 @@ from .views import (
     ProjectScreenAssignmentsView,
     ScreenFieldViewSet,
     ScreenViewSet,
+    SearchView,
     WorkItemLinkViewSet,
     WorkItemStatusViewSet,
     WorkItemViewSet,
@@ -71,4 +72,5 @@ urlpatterns = router.urls + [
         ProjectScreenAssignmentsView.as_view(),
         name="project-screen-assignments",
     ),
+    path("search/", SearchView.as_view(), name="search"),
 ]

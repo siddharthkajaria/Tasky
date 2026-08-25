@@ -256,3 +256,29 @@ See `GET/POST /api/work-items/{id}/links/` above for listing/creating. Self-link
 | GET | `/api/users/` | `id`, `username`, `display_name` for the assignee dropdown |
 
 **`/api/me/tasks/` exclusion is category-based, not status-based.** It excludes every work item whose status has `category = "done"`, not just those with a literal status named "Done". A project that recategorizes a status (e.g. renames an `in_progress` status to `done` category, or vice versa) will silently change which work items appear here without any change to the endpoint itself.
+
+## Search
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/search/` | cross-project search over work items in projects I'm a member of |
+
+Query params — at least one of `q` or a facet is required, or the request 400s:
+
+| Param | Meaning |
+|---|---|
+| `q` | free-text term, matched against `key`, `title`, and `description`; must be at least 2 characters (400 otherwise) |
+| `item_type` | one of `epic`, `story`, `task`, `bug`, `subtask` |
+| `status_category` | one of `todo`, `in_progress`, `done` — matches every status in that category, not one literal status |
+| `priority` | `1`, `2`, or `3` |
+| `assignee` | a user id; 400 if the user doesn't exist |
+| `component` | a `Component` id; 400 if it doesn't exist or belongs to a project I'm not a member of |
+| `label` | a `Label` id, or a label name (case-insensitive); 400 if no matching label exists |
+| `project` | a `Project` id to narrow the search to; 400 if I'm not a member of it |
+
+Every result is always scoped to projects I'm a member of first, before any facet is applied — a forged `component`, `label`, or `project` value belonging to a project I'm not in can never surface a work item from that project; it just 400s instead.
+
+**Ranking when `q` is given:** results whose `key` or `title` contains `q` (tier 1) always rank above results that only match on `description` (tier 2) — a result matching both counts once, in tier 1. Within each tier, results are ordered by `-updated_at` (most recently updated first), tied on `-id`. When only facets are given (no `q`), results are ordered the same way, `-updated_at` then `-id`.
+
+Results are capped at 50 with no pagination — a search matching more than 50 work items simply returns the top 50 by the ranking above.
+
+Each result has the shape produced by `SearchResultSerializer`: `id`, `key`, `title`, `item_type`, `status_detail` (`{id, name, category}`), `priority`, `priority_label`, `assignee_detail` (nested user or `null`), `project` (`{id, key, name}`), `board` (`{id, name}`), `updated_at`. The response is `{"results": [...]}`.
