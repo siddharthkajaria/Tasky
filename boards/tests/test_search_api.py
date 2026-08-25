@@ -110,6 +110,86 @@ def test_status_category_facet_filters_by_category_not_literal_status(auth_clien
 
 
 @pytest.mark.django_db
+def test_status_category_facet_matches_across_projects_with_different_status_names(auth_client, board, project, user):
+    from projects.models import Project, ProjectMembership
+
+    seed_default_statuses(project)
+    mine_done = WorkItemStatus.objects.filter(project=project, category="done").first()
+    mine_done.name = "Shipped"
+    mine_done.save()
+    mine = WorkItem.objects.create(board=board, title="Finished thing", status=mine_done, created_by=None)
+
+    other = Project.objects.create(key="OTHERDONE", name="Elsewhere")
+    ProjectMembership.objects.create(project=other, user=user, role="owner")
+    seed_default_statuses(other)
+    other_board = Board.objects.create(name="Other Board", created_by=user, project=other)
+    other_done = WorkItemStatus.objects.filter(project=other, category="done").first()
+    other_done.name = "Complete"
+    other_done.save()
+    theirs = WorkItem.objects.create(board=other_board, title="Also finished", status=other_done, created_by=None)
+
+    response = auth_client.get("/api/search/?status_category=done")
+    ids = {r["id"] for r in response.json()["results"]}
+    assert ids == {mine.id, theirs.id}
+
+
+@pytest.mark.django_db
+def test_omitting_project_searches_every_project_im_a_member_of(auth_client, board, project, user):
+    from projects.models import Project, ProjectMembership
+
+    status = WorkItemStatus.objects.filter(project=project, category="todo").first()
+    in_first = WorkItem.objects.create(board=board, title="Zebracorn task", status=status, created_by=None)
+
+    second = Project.objects.create(key="SECOND", name="Second Project")
+    ProjectMembership.objects.create(project=second, user=user, role="owner")
+    second_board = Board.objects.create(name="Second Board", created_by=user, project=second)
+    second_status = WorkItemStatus.objects.filter(project=second, category="todo").first()
+    in_second = WorkItem.objects.create(board=second_board, title="Zebracorn followup", status=second_status, created_by=None)
+
+    response = auth_client.get("/api/search/?q=zebracorn")
+    ids = {r["id"] for r in response.json()["results"]}
+    assert ids == {in_first.id, in_second.id}
+
+
+@pytest.mark.django_db
+def test_combined_facets_are_anded_together_not_ored(auth_client, board, project):
+    status = WorkItemStatus.objects.filter(project=project, category="todo").first()
+    match = WorkItem.objects.create(
+        board=board, title="Matching bug", item_type="bug", priority=3, status=status, created_by=None,
+    )
+    WorkItem.objects.create(
+        board=board, title="Wrong priority bug", item_type="bug", priority=2, status=status, created_by=None,
+    )
+    WorkItem.objects.create(
+        board=board, title="Wrong type task", item_type="task", priority=3, status=status, created_by=None,
+    )
+
+    response = auth_client.get("/api/search/?item_type=bug&priority=3")
+    ids = [r["id"] for r in response.json()["results"]]
+    assert ids == [match.id]
+
+
+@pytest.mark.django_db
+def test_a_shared_global_label_never_surfaces_a_foreign_projects_items(auth_client, board, project, other_user):
+    from projects.models import Project, ProjectMembership
+
+    seed_default_statuses(project)
+    label = Label.objects.create(name="urgent", color="#A32218", created_by=None)
+    mine = WorkItem.objects.create(board=board, title="Mine", created_by=None)
+    mine.labels.add(label)
+
+    foreign = Project.objects.create(key="FOREIGN", name="Not Yours")
+    ProjectMembership.objects.create(project=foreign, user=other_user, role="owner")
+    seed_default_statuses(foreign)
+    foreign_board = Board.objects.create(name="B", created_by=other_user, project=foreign)
+    theirs = WorkItem.objects.create(board=foreign_board, title="Theirs", created_by=None)
+    theirs.labels.add(label)
+
+    response = auth_client.get("/api/search/?label=urgent")
+    assert [r["id"] for r in response.json()["results"]] == [mine.id]
+
+
+@pytest.mark.django_db
 def test_priority_facet_filters(auth_client, board, project):
     status = WorkItemStatus.objects.filter(project=project, category="todo").first()
     high = WorkItem.objects.create(board=board, title="Urgent", priority=3, status=status, created_by=None)
@@ -184,6 +264,28 @@ def test_label_facet_with_unknown_name_is_rejected(auth_client):
     response = auth_client.get("/api/search/?label=nonexistent")
     assert response.status_code == 400
     assert "label" in response.json()
+
+
+@pytest.mark.django_db
+def test_label_facet_with_a_non_int_digit_like_value_400s_not_500s(auth_client):
+    # U+00B2 SUPERSCRIPT TWO passes str.isdigit() but int() raises ValueError on it.
+    response = auth_client.get("/api/search/?label=²")
+    assert response.status_code == 400
+    assert "label" in response.json()
+
+
+@pytest.mark.django_db
+def test_label_facet_falls_back_to_name_when_a_numeric_looking_name_has_no_matching_id(auth_client, board, project):
+    status = WorkItemStatus.objects.filter(project=project, category="todo").first()
+    # Give the label a numeric id that is NOT "2026" itself, so the id-lookup for
+    # "2026" genuinely misses before falling back to the name lookup.
+    label = Label.objects.create(name="2026", color="#A32218", created_by=None)
+    assert label.id != 2026
+    item = WorkItem.objects.create(board=board, title="Roadmap", status=status, created_by=None)
+    item.labels.add(label)
+
+    response = auth_client.get("/api/search/?label=2026")
+    assert [r["id"] for r in response.json()["results"]] == [item.id]
 
 
 @pytest.mark.django_db

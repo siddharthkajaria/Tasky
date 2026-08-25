@@ -708,15 +708,13 @@ class SearchView(APIView):
         priority = params.get("priority")
         if priority:
             priority = self._as_int(priority, "priority")
-            if priority not in (1, 2, 3):
+            if priority not in WorkItem.Priority.values:
                 raise ValidationError({"priority": "Must be 1, 2, or 3."})
             qs = qs.filter(priority=priority)
 
         assignee = params.get("assignee")
         if assignee:
             assignee_id = self._as_int(assignee, "assignee")
-            from django.contrib.auth import get_user_model
-
             if not get_user_model().objects.filter(pk=assignee_id).exists():
                 raise ValidationError({"assignee": "User not found."})
             qs = qs.filter(assignee_id=assignee_id)
@@ -731,9 +729,10 @@ class SearchView(APIView):
 
         label_param = params.get("label")
         if label_param:
-            if label_param.isdigit():
+            label = None
+            if label_param.isdecimal():
                 label = Label.objects.filter(pk=int(label_param)).first()
-            else:
+            if label is None:
                 label = Label.objects.filter(name__iexact=label_param).first()
             if not label:
                 raise ValidationError({"label": "Label not found."})
@@ -743,9 +742,8 @@ class SearchView(APIView):
 
         if q:
             tier1 = qs.filter(models.Q(key__icontains=q) | models.Q(title__icontains=q))
-            tier1_ids = list(tier1.order_by("-updated_at", "-id")[:50].values_list("id", flat=True))
-            results = list(tier1.filter(id__in=tier1_ids))
-            results.sort(key=lambda item: tier1_ids.index(item.id))
+            results = list(tier1.order_by("-updated_at", "-id")[:50])
+            tier1_ids = [item.id for item in results]
             remaining = 50 - len(results)
             if remaining > 0:
                 tier2 = qs.filter(description__icontains=q).exclude(id__in=tier1_ids)

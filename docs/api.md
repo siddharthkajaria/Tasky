@@ -275,6 +275,8 @@ Query params — at least one of `q` or a facet is required, or the request 400s
 | `label` | a `Label` id, or a label name (case-insensitive); 400 if no matching label exists |
 | `project` | a `Project` id to narrow the search to; 400 if I'm not a member of it |
 
+**`label` tries id first, then falls back to name.** A numeric-looking value (Unicode decimal digits only) is looked up as a `Label` id first; if that finds nothing, it's tried again as an exact case-insensitive name match. This means a label literally named with digits (e.g. `"2026"`) is still reachable by name even though its numeric-looking value is tried as an id first.
+
 Every result is always scoped to projects I'm a member of first, before any facet is applied — a forged `component`, `label`, or `project` value belonging to a project I'm not in can never surface a work item from that project; it just 400s instead.
 
 **Ranking when `q` is given:** results whose `key` or `title` contains `q` (tier 1) always rank above results that only match on `description` (tier 2) — a result matching both counts once, in tier 1. Within each tier, results are ordered by `-updated_at` (most recently updated first), tied on `-id`. When only facets are given (no `q`), results are ordered the same way, `-updated_at` then `-id`.
