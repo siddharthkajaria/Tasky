@@ -290,6 +290,15 @@ See `GET/POST /api/work-items/{id}/links/` above for listing/creating. Self-link
 | GET/POST | `/api/work-items/{id}/comments/` | POST takes `{body}`; author comes from the session |
 | DELETE | `/api/comments/{id}/` | if the comment has an author, only that author can delete it (otherwise 403); if the comment's author account has been deleted (`author` is `null`), any signed-in user who is a member of the comment's project can delete it (403 for non-members) |
 
+## Attachments
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/work-items/{id}/attachments/` | POST is `multipart/form-data` with a `file` field; any project member may upload; rejects with `400` if `file` is missing or exceeds the 25 MB cap |
+| DELETE | `/api/attachments/{id}/` | the uploader may delete their own upload, **and** any Owner/Admin of the project may delete anyone's — wider than Comment's uploader-only rule; 403 for a plain member deleting someone else's, and for a non-member entirely |
+| GET | `/api/attachments/{id}/download/` | streams the file bytes with `Content-Disposition: attachment` set to the original filename; membership-gated like every other endpoint |
+
+Downloads are never served via a raw `MEDIA_URL` static path — `urls.py` has no route mapping `MEDIA_URL` to a static-serving view. `GET /api/attachments/{id}/download/` is the only way to fetch a file's bytes, so every download goes through the same project-membership check as everything else.
+
 ## Invitations
 | Method | Path | Notes |
 |---|---|---|

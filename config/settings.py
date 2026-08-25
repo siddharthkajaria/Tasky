@@ -175,6 +175,15 @@ STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'ui' / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Attachment file storage — local filesystem, not an object store (see
+# docs/superpowers/specs/2026-08-24-tasky-task-detail-ux-design.md). Never
+# served directly: boards.views.AttachmentViewSet.download is the only
+# path a client can fetch a file through, so it can enforce the same
+# project-membership check every other endpoint does. No urls.py entry
+# maps MEDIA_URL to a static-serving view — that's deliberate.
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

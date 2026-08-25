@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db import models, transaction
-from django.http import Http404
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import mixins, viewsets
@@ -14,8 +14,9 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Attachment, Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
 from .serializers import (
+    AttachmentSerializer,
     BoardSerializer,
     CommentSerializer,
     ComponentSerializer,
@@ -96,6 +97,9 @@ class BoardViewSet(viewsets.ModelViewSet):
             "assignee", "created_by", "parent", "parent__status", "status", "release"
         ).prefetch_related("components", "labels", "field_values__field").order_by("backlog_position", "id")
         return Response(WorkItemSerializer(items, many=True).data)
+
+
+MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024  # 25 MB
 
 
 class WorkItemViewSet(viewsets.ModelViewSet):
@@ -461,6 +465,28 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         thread = item.comments.select_related("author")
         return Response(CommentSerializer(thread, many=True).data)
 
+    @action(detail=True, methods=["get", "post"], parser_classes=[MultiPartParser])
+    def attachments(self, request, pk=None):
+        item = self.get_object()
+
+        if request.method == "POST":
+            upload = request.FILES.get("file")
+            if not upload:
+                raise ValidationError({"file": "This field is required."})
+            if upload.size > MAX_ATTACHMENT_SIZE:
+                raise ValidationError({"file": "File exceeds the 25 MB limit."})
+            attachment = Attachment.objects.create(
+                work_item=item,
+                file=upload,
+                filename=upload.name,
+                content_type=upload.content_type or "",
+                size=upload.size,
+                uploaded_by=request.user,
+            )
+            return Response(AttachmentSerializer(attachment).data, status=201)
+
+        return Response(AttachmentSerializer(item.attachments.select_related("uploaded_by"), many=True).data)
+
 
 class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
     """Deletion only — comments are created through the work item's own endpoint."""
@@ -480,6 +506,32 @@ class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
         if instance.author_id is not None and instance.author != self.request.user:
             raise PermissionDenied("You can only delete your own comments.")
         instance.delete()
+
+
+class AttachmentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    """Deletion and download only — attachments are created through the
+    work item's own /attachments/ endpoint (see WorkItemViewSet)."""
+
+    serializer_class = AttachmentSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+
+    def get_queryset(self):
+        return Attachment.objects.select_related("uploaded_by", "work_item__board__project")
+
+    def perform_destroy(self, instance):
+        role = instance.project.memberships.get(user=self.request.user).role
+        is_uploader = instance.uploaded_by_id is not None and instance.uploaded_by_id == self.request.user.id
+        if not is_uploader and not can_manage_components(role):
+            raise PermissionDenied("Only the uploader or an Owner/Admin can delete this attachment.")
+        instance.delete()
+
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        attachment = self.get_object()
+        response = FileResponse(
+            attachment.file.open("rb"), as_attachment=True, filename=attachment.filename
+        )
+        return response
 
 
 class WorkItemLinkViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):

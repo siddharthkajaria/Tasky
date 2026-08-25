@@ -2,6 +2,7 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    AttachmentViewSet,
     BoardViewSet,
     CommentViewSet,
     ComponentViewSet,
@@ -23,6 +24,7 @@ router = DefaultRouter()
 router.register("boards", BoardViewSet, basename="board")
 router.register("work-items", WorkItemViewSet, basename="work-item")
 router.register("comments", CommentViewSet, basename="comment")
+router.register("attachments", AttachmentViewSet, basename="attachment")
 router.register("work-item-links", WorkItemLinkViewSet, basename="work-item-link")
 router.register("fields", CustomFieldViewSet, basename="custom-field")
 router.register("screens", ScreenViewSet, basename="screen")

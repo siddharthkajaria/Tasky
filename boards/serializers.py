@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from accounts.serializers import UserSerializer
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Label, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Attachment, Board, Comment, Component, CustomField, FieldOption, Label, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
 from .services import LABEL_PALETTE, apply_custom_fields, custom_fields_read_map, custom_fields_write_error, next_backlog_position, resolve_default_status, resolve_labels
 
 VALID_PARENT_TYPES = {
@@ -436,3 +436,11 @@ class CommentSerializer(serializers.ModelSerializer):
         if not value.strip():
             raise serializers.ValidationError("A comment cannot be empty.")
         return value
+
+
+class AttachmentSerializer(serializers.ModelSerializer):
+    uploaded_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Attachment
+        fields = ["id", "work_item", "filename", "content_type", "size", "uploaded_by", "uploaded_at"]

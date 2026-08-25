@@ -396,3 +396,28 @@ class Comment(models.Model):
     @property
     def project(self):
         return self.card.board.project
+
+
+class Attachment(models.Model):
+    work_item = models.ForeignKey(WorkItem, on_delete=models.CASCADE, related_name="attachments")
+    file = models.FileField(upload_to="attachments/")
+    filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100, blank=True)
+    size = models.PositiveIntegerField()
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="attachments_uploaded",
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["uploaded_at", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.filename} on {self.work_item}"
+
+    @property
+    def project(self):
+        return self.work_item.board.project
