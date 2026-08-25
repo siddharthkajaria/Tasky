@@ -66,6 +66,16 @@ const Logic = (() => {
   // is a plain edit any project member can already do, no separate check.
   const canManageSprints = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Releases (sub-project 7) ------------------------------------------
+     Same governance tier as Components/Statuses/Sprints: Owner/Admin manage
+     the release itself (create/rename/status/date/delete); any project
+     member can tag a work item with an existing one — an ordinary edit, no
+     separate check. Flat status, no transition rules — the same "custom
+     statuses, no workflow" simplification Workflows itself uses. */
+  const RELEASE_STATUSES = ['unreleased', 'released', 'archived'];
+  const RELEASE_STATUS_LABEL = { unreleased: 'Unreleased', released: 'Released', archived: 'Archived' };
+  const canManageReleases = (role) => role === 'owner' || role === 'admin';
+
   /* ---- Custom fields & screens (sub-project 2b) ------------------------ */
 
   // The spec's fixed set. No custom types, and a field's type is immutable
@@ -199,6 +209,7 @@ const Logic = (() => {
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
     requiresParent, canHaveParent, isValidParent, canManageComponents,
     CATEGORIES, CATEGORY_LABELS, canManageStatuses, canManageSprints,
+    RELEASE_STATUSES, RELEASE_STATUS_LABEL, canManageReleases,
     FIELD_TYPES, FIELD_TYPE_LABEL, FIELD_TYPE_HINT,
     fieldHasOptions, isMultiValue,
     canManageDefinitions, canManageScreenAssignments,

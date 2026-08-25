@@ -109,12 +109,29 @@ const Store = (() => {
     },
   ];
 
+  // Releases (sub-project 7) — declared ahead of the work item seed block,
+  // same reason `sprints` and `labels` are: seeding needs to tag items
+  // into one directly. Project-scoped, matching Component: real per-project
+  // rows, not a global table. `v2.4.0` is deliberately seeded in both
+  // project 1 and project 2 — same name, different project, both allowed —
+  // so the "project-scoped, not global" rule is visible from the seed
+  // itself, not just provable by trying to create a duplicate by hand.
+  let releases = [
+    { id: id(), project: 1, name: 'v2.3', status: 'released', release_date: '2026-07-15' },
+    { id: id(), project: 1, name: 'v2.4.0', status: 'unreleased', release_date: '2026-09-01' },
+    // Archived with no date at all — the "went straight from unreleased to
+    // archived, never shipped" case the spec calls out explicitly.
+    { id: id(), project: 1, name: 'Q2 Cleanup', status: 'archived', release_date: null },
+    { id: id(), project: 2, name: 'v2.4.0', status: 'unreleased', release_date: null },
+  ];
+  const [releaseV23, releaseV24] = releases;
+
   let workItems = [];
   function seedItem(o) {
     const item = Object.assign({
       description: '', priority: 2, due_date: null, assignee: null,
       parent: null, position: 0, component_ids: [], label_ids: [], created_by: 1,
-      sprint: null, backlog_position: 0,
+      sprint: null, backlog_position: 0, release: null,
     }, o);
     workItems.push(item);
     return item;
@@ -141,7 +158,7 @@ const Store = (() => {
     id: id(), key: 'TASKY-3', board: board1.id, item_type: 'task', parent: epic.id,
     title: 'Wire up the onboarding API', status: taskyStatuses.todo.id, assignee: 2,
     component_ids: [components[1].id],
-    sprint: sprints[0].id, backlog_position: 1,
+    sprint: sprints[0].id, backlog_position: 1, release: releaseV24.id,
   });
   seedItem({
     id: id(), key: 'TASKY-4', board: board1.id, item_type: 'subtask', parent: story1.id,
@@ -152,7 +169,7 @@ const Store = (() => {
     id: id(), key: 'TASKY-5', board: board1.id, item_type: 'bug',
     title: 'Signup button misaligned on Safari', status: taskyStatuses.inProgress.id, priority: 3, assignee: 1,
     label_ids: [lblUrgent.id],
-    backlog_position: 2,
+    backlog_position: 2, release: releaseV23.id,
   });
 
   let links = [
@@ -500,6 +517,7 @@ const Store = (() => {
       components: components.filter(c => item.component_ids.includes(c.id)),
       labels_detail: (item.label_ids || []).map(lid => labels.find(l => l.id === lid)).filter(Boolean),
       sprint_detail: item.sprint ? sprintSummary(item.sprint) : null,
+      release_detail: item.release ? releaseSummary(item.release) : null,
     });
   }
 
@@ -563,6 +581,13 @@ const Store = (() => {
       status = defaultStatusFor(board.project);
     }
 
+    let release = null;
+    if (fields.release) {
+      release = releases.find(r => r.id === Number(fields.release));
+      if (!release) return fail(400, 'Release not found.');
+      if (release.project !== board.project) return fail(400, "Release must belong to this item's project.");
+    }
+
     const cfErr = customFieldsError(board.project, fields.item_type, fields.custom_fields);
     if (cfErr) return failCustomFields(cfErr.message, cfErr.errors);
 
@@ -573,6 +598,7 @@ const Store = (() => {
       due_date: fields.due_date || null, assignee: fields.assignee || null,
       parent: parent ? parent.id : null, component_ids: fields.component_ids || [],
       label_ids: resolveLabelIds(fields.labels),
+      release: release ? release.id : null,
       created_by: me.id,
     });
     const siblings = workItems.filter(w => w.board === board.id && w.status === item.status && w.id !== item.id);
@@ -625,6 +651,16 @@ const Store = (() => {
       }
     }
 
+    let newRelease;
+    if ('release' in fields) {
+      const newReleaseId = fields.release ? Number(fields.release) : null;
+      newRelease = newReleaseId ? releases.find(r => r.id === newReleaseId) : null;
+      if (newReleaseId && !newRelease) return fail(400, 'Release not found.');
+      if (newRelease && newRelease.project !== boardProjectId(item.board)) {
+        return fail(400, "Release must belong to this item's project.");
+      }
+    }
+
     if ('title' in fields) item.title = fields.title.trim();
     ['description', 'priority', 'due_date', 'assignee', 'component_ids'].forEach(f => {
       if (f in fields) item[f] = fields[f];
@@ -632,6 +668,7 @@ const Store = (() => {
     if ('labels' in fields) item.label_ids = resolveLabelIds(fields.labels);
     if (newStatus) item.status = newStatus.id;
     if (newParent !== undefined) item.parent = newParent ? newParent.id : null;
+    if (newRelease !== undefined) item.release = newRelease ? newRelease.id : null;
     if ('custom_fields' in fields) applyCustomFields(item.id, fields.custom_fields);
 
     return wait(decorateWorkItem(item));
@@ -1190,6 +1227,116 @@ const Store = (() => {
     item.sprint = targetSprintId;
     item.backlog_position = nextBacklogPosition(item.board, targetSprintId);
     return wait(decorateWorkItem(item));
+  }
+
+  /* ---- releases (sub-project 7) ------------------------------------------
+     Project-scoped, matching Component's real per-project rows — not global
+     like Label/CustomField/Screen. Same Owner/Admin-manage / any-member-
+     apply split as Components and Sprints. A flat unreleased/released/
+     archived status with one optional date, no transition rules; deleting a
+     release unassigns every work item that had it rather than blocking,
+     same as Component (not the `PROTECT` WorkItemStatus uses). `releases`
+     itself is declared earlier, ahead of the work item seed block, so the
+     seed can tag items into one directly. */
+
+  function requireReleaseManager(projectId) {
+    if (!Logic.canManageReleases(myRole(projectId))) {
+      throw Object.assign(
+        new Error("You don't have permission to manage this project's releases."), { status: 403 },
+      );
+    }
+  }
+
+  const releasesFor = (projectId) => releases.filter(r => r.project === Number(projectId));
+
+  function decorateRelease(release) {
+    return Object.assign({}, release, {
+      item_count: workItems.filter(w => w.release === release.id).length,
+    });
+  }
+
+  function releaseSummary(releaseId) {
+    const release = releases.find(r => r.id === releaseId);
+    return release ? { id: release.id, name: release.name, status: release.status, release_date: release.release_date } : null;
+  }
+
+  // Default list ordering per spec: release_date ascending (nulls last),
+  // then name — releases aren't a hand-ordered column list like Statuses,
+  // so there's no `position` field to sort by instead.
+  function sortedReleases(projectId) {
+    return releasesFor(projectId).slice().sort((a, b) => {
+      if (a.release_date && b.release_date) {
+        if (a.release_date !== b.release_date) return a.release_date < b.release_date ? -1 : 1;
+      } else if (a.release_date || b.release_date) {
+        return a.release_date ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  function listReleases(projectId) {
+    try { requireMember(projectId); } catch (err) { return Promise.reject(err); }
+    return wait(sortedReleases(projectId).map(decorateRelease));
+  }
+
+  // `status` is deliberately not accepted here — a release is created
+  // before it exists to be released, so it always starts `unreleased`.
+  function createRelease(projectId, { name, release_date }) {
+    try { requireReleaseManager(projectId); } catch (err) { return Promise.reject(err); }
+    const clean = (name || '').trim();
+    if (!clean) return fail(400, 'This field may not be blank.');
+    if (releases.some(r => r.project === Number(projectId) && r.name.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, `"${clean}" already exists.`);
+    }
+    if (release_date && !Logic.isIsoDate(release_date)) return fail(400, 'Release date must be a date (YYYY-MM-DD).');
+    const release = {
+      id: id(), project: Number(projectId), name: clean, status: 'unreleased',
+      release_date: release_date || null,
+    };
+    releases.push(release);
+    return wait(decorateRelease(release));
+  }
+
+  function updateRelease(releaseId, { name, status, release_date }) {
+    const release = releases.find(r => r.id === Number(releaseId));
+    if (!release) return fail(404, 'Not found.');
+    try { requireReleaseManager(release.project); } catch (err) { return Promise.reject(err); }
+
+    if (name !== undefined) {
+      const clean = (name || '').trim();
+      if (!clean) return fail(400, 'This field may not be blank.');
+      if (releases.some(r => r.id !== release.id && r.project === release.project && r.name.toLowerCase() === clean.toLowerCase())) {
+        return fail(400, `"${clean}" already exists.`);
+      }
+      release.name = clean;
+    }
+    if (status !== undefined) {
+      if (!Logic.RELEASE_STATUSES.includes(status)) return fail(400, 'Invalid status.');
+      release.status = status;
+    }
+    if (release_date !== undefined) {
+      if (release_date && !Logic.isIsoDate(release_date)) return fail(400, 'Release date must be a date (YYYY-MM-DD).');
+      release.release_date = release_date || null;
+    }
+    return wait(decorateRelease(release));
+  }
+
+  // No "still in use" guard, matching Component — unlike WorkItemStatus's
+  // `PROTECT`. Un-assigns every work item that had it rather than blocking.
+  function deleteRelease(releaseId) {
+    const release = releases.find(r => r.id === Number(releaseId));
+    if (!release) return fail(404, 'Not found.');
+    try { requireReleaseManager(release.project); } catch (err) { return Promise.reject(err); }
+    releases = releases.filter(r => r.id !== release.id);
+    workItems.forEach(w => { if (w.release === release.id) w.release = null; });
+    return wait(null);
+  }
+
+  function listReleaseWorkItems(releaseId) {
+    const release = releases.find(r => r.id === Number(releaseId));
+    if (!release) return fail(404, 'Not found.');
+    try { requireMember(release.project); } catch (err) { return Promise.reject(err); }
+    return wait(workItems.filter(w => w.release === release.id).map(decorateWorkItem));
   }
 
   /* ---- labels (sub-project 4) -------------------------------------------
@@ -1846,6 +1993,7 @@ const Store = (() => {
     listStatuses, createStatus, updateStatus, moveStatus, deleteStatus,
     listSprints, createSprint, updateSprint, startSprint, completeSprint, deleteSprint,
     listBacklog, listSprintWorkItems, scheduleWorkItem,
+    listReleases, createRelease, updateRelease, deleteRelease, listReleaseWorkItems,
     listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
     listLinks, createLink, deleteLink,
     listUsers,

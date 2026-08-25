@@ -129,6 +129,17 @@
     </section>
 
     <section>
+      <h2 class="section-label">Releases</h2>
+      <p class="page-sub" style="margin-bottom:10px">Named shippable milestones work items get tagged with — a separate axis from Sprints, which track iterations, not versions. Owner and Admins manage the list; any member can tag a work item with an existing one.</p>
+      <div class="release-list" data-releases></div>
+      <form class="create-release" data-create-release novalidate hidden>
+        <input name="name" placeholder="Release name, e.g. v2.5.0" aria-label="Release name" required>
+        <input type="date" name="release_date" aria-label="Target date">
+        <button class="btn" type="submit">Add release</button>
+      </form>
+    </section>
+
+    <section>
       <h2 class="section-label">Members</h2>
       <ul class="member-list" data-members></ul>
     </section>

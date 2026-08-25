@@ -19,6 +19,7 @@ prototype of the whole product, not a one-off mockup.
 | 2c — Bulk Operations & Import | `../docs/superpowers/specs/2026-08-24-tasky-bulk-import-design.md` | Signed off, **shipped to production** (`boards/views.py`, `boards/services.py`) |
 | 5 — Search | `../docs/superpowers/specs/2026-08-24-tasky-search-design.md` | Signed off, **shipped to production** (`boards/views.py`) |
 | 6 — Backlog & Sprints | `../docs/superpowers/specs/2026-08-24-tasky-backlog-sprints-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/services.py`) |
+| 7 — Releases | `../docs/superpowers/specs/2026-08-24-tasky-releases-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -203,6 +204,47 @@ Sign in as `asha`, `kabir` or `lena` — any password works.
     Start/Complete/Delete button are hidden, but the sprint list, the
     backlog list, and the "Move to" dropdown are all still fully usable —
     scheduling a work item is a plain edit, not a manage-tier action.
+
+## Sub-project 7 — Releases
+
+42. **Open the Tasky Redesign project page** and find the new "Releases"
+    section, below Field screens. Seeded with three: **v2.3** (Released,
+    dated 2026-07-15), **v2.4.0** (Unreleased, targeted 2026-09-01), and
+    **Q2 Cleanup** (Archived, no date at all — a release that was abandoned
+    straight from Unreleased, never shipped). `v2.3` lists `TASKY-5` as
+    tagged — notice `TASKY-5` is still In Progress on the board even though
+    its release already says Released: nothing here ties a release's status
+    to its work items' statuses, by design.
+43. **Try adding a release named `v2.4.0`** (any casing) — rejected, already
+    taken in this project. **Switch to Website Refresh** (the project
+    switcher) and look at its own Releases section — it already has its own
+    `v2.4.0`, seeded independently. Same name, two different projects, both
+    fine — releases are project-scoped, not global like Labels.
+44. **Add a real release** via the form — name it, optionally give it a
+    target date, submit. It appears Unreleased with 0 items, since `status`
+    isn't offered on create — a release doesn't exist to be "released" yet.
+45. **Rename it** (click the name, edit, click away), **change its status**
+    via the dropdown — try jumping straight from Unreleased to Archived,
+    skipping Released entirely — and **set or clear its date** at any time,
+    regardless of status. No transition rules anywhere.
+46. **Open a work item** (e.g. the Epic `TASKY-1`) and find the new
+    **Release** field next to Due date — any project member can set this,
+    no Owner/Admin check. Pick `v2.4.0`, save, and notice the board card
+    now shows a small release chip. Reopen the item — the selection
+    persisted. Set it back to "No release" — the chip disappears.
+47. **Back on the project page**, `v2.4.0`'s card now lists `TASKY-1`
+    alongside the seeded `TASKY-3`. Click either row to jump straight to
+    that item's detail modal.
+48. **Delete `v2.3`** (still holding `TASKY-5`) — succeeds with no "in use"
+    guard, same as Components. Open `TASKY-5` afterward — its Release field
+    is back to "No release"; the work item itself was untouched.
+49. **Sign in as a plain Member of a project** (e.g. `asha` on Client
+    Portal, `CLNT`) and open that project's page — the "+ Add release" form
+    and every status/date/delete control are hidden, but the release list
+    itself is still visible (Client Portal has none seeded yet, so it's a
+    clean empty state), and tagging a work item with an existing release
+    from the detail modal still works — an ordinary edit, not a manage-tier
+    action.
 
 All state is in memory — refreshing the page resets it to the seed above.
 

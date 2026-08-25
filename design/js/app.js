@@ -265,11 +265,20 @@ async function viewProject(projectId) {
     await renderComponents(main, projectId, project.my_role);
     await renderStatuses(main, projectId, project.my_role);
     await renderScreenAssignments(main, projectId, project.my_role);
+    await renderReleases(main, projectId, project.my_role);
     await renderMembers(main, projectId, project.my_role);
     await renderPendingInvites(main, projectId, project.my_role);
   } catch (err) {
-    handle(err);
-    location.hash = '#/projects';
+    // This chain awaits several sections in sequence; a user can navigate
+    // away (e.g. into a board) before it finishes, which leaves later
+    // sections writing into a `main` that's no longer this page's template
+    // and throwing. That's harmless — only treat it as a real load failure,
+    // and only bounce to the projects list, if we're still looking at this
+    // project's page when it happens.
+    if (location.hash === `#/projects/${projectId}`) {
+      handle(err);
+      location.hash = '#/projects';
+    }
   }
 }
 
@@ -554,6 +563,146 @@ function assignmentRow(assignment, allScreens, projectId, myRole, canEdit) {
       }
     });
   }
+  return li;
+}
+
+/* Releases (sub-project 7) -------------------------------------------------
+   Project-scoped, like Components and Statuses, not global — so this lives
+   on the project page too. Each card always shows its currently-tagged
+   items inline (same choice sub-project 6 made for a sprint's items), no
+   separate "view items" click needed. */
+
+async function renderReleases(main, projectId, myRole) {
+  const list = main.querySelector('[data-releases]');
+  const form = main.querySelector('[data-create-release]');
+  if (!list || !form) return;
+  const canManage = Logic.canManageReleases(myRole);
+  form.hidden = !canManage;
+  list.innerHTML = skeletonList(2);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nameInput = form.querySelector('[name=name]');
+    const dateInput = form.querySelector('[name=release_date]');
+    if (!nameInput.value.trim()) return;
+    try {
+      await Store.createRelease(projectId, { name: nameInput.value, release_date: dateInput.value || null });
+      nameInput.value = '';
+      dateInput.value = '';
+      await renderReleases(main, projectId, myRole);
+    } catch (err) { handle(err); }
+  });
+
+  try {
+    const items = await Store.listReleases(projectId);
+    if (!items.length) {
+      list.innerHTML = '<p class="empty">No releases yet.</p>';
+      return;
+    }
+    const cards = await Promise.all(items.map(r => releaseCard(r, main, projectId, myRole, canManage)));
+    list.replaceChildren(...cards);
+    stagger(cards);
+  } catch (err) {
+    list.innerHTML = '';
+    handle(err);
+  }
+}
+
+async function releaseCard(release, main, projectId, myRole, canManage) {
+  const card = document.createElement('div');
+  card.className = `release-card status-${release.status}`;
+
+  card.innerHTML =
+    `<div class="release-head">` +
+      `<span class="release-name" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(release.name)}</span>` +
+      (canManage
+        ? `<select class="release-status-select" data-status aria-label="Status for ${esc(release.name)}">${
+            Logic.RELEASE_STATUSES.map(s =>
+              `<option value="${s}" ${s === release.status ? 'selected' : ''}>${Logic.RELEASE_STATUS_LABEL[s]}</option>`
+            ).join('')
+          }</select>`
+        : `<span class="release-status-badge state-${release.status}">${Logic.RELEASE_STATUS_LABEL[release.status]}</span>`) +
+      (canManage
+        ? `<input type="date" class="release-date-input" data-date value="${release.release_date || ''}" aria-label="Date for ${esc(release.name)}">`
+        : `<span class="row-meta">${release.release_date ? esc(release.release_date) : 'No date set'}</span>`) +
+      `<span class="row-meta">${release.item_count} item${release.item_count === 1 ? '' : 's'}</span>` +
+      (canManage ? `<button class="btn btn-danger" type="button" data-delete>Delete</button>` : '') +
+    `</div>` +
+    `<ul class="release-items" data-items></ul>`;
+
+  const itemsEl = card.querySelector('[data-items]');
+  try {
+    const items = await Store.listReleaseWorkItems(release.id);
+    if (!items.length) {
+      itemsEl.innerHTML = '<li class="empty-inline">Nothing tagged with this release yet.</li>';
+    } else {
+      itemsEl.replaceChildren(...items.map(item => releaseItemRow(item, projectId)));
+    }
+  } catch (err) { handle(err); }
+
+  const run = async (fn) => {
+    try {
+      await fn();
+      await renderReleases(main, projectId, myRole);
+    } catch (err) { handle(err); }
+  };
+
+  const nameEl = card.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+    });
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === release.name) { nameEl.textContent = release.name; return; }
+      try {
+        await Store.updateRelease(release.id, { name: value });
+        toast('Release renamed');
+      } catch (err) {
+        nameEl.textContent = release.name;
+        handle(err);
+      }
+    });
+  }
+  const statusEl = card.querySelector('[data-status]');
+  if (statusEl) statusEl.addEventListener('change', () => run(() => Store.updateRelease(release.id, { status: statusEl.value })));
+  const dateEl = card.querySelector('[data-date]');
+  if (dateEl) dateEl.addEventListener('change', () => run(() => Store.updateRelease(release.id, { release_date: dateEl.value || null })));
+  const deleteBtn = card.querySelector('[data-delete]');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (release.item_count && !confirm(`Delete "${release.name}"? ${release.item_count} work item${release.item_count === 1 ? '' : 's'} will be un-tagged, not deleted.`)) return;
+    await run(() => Store.deleteRelease(release.id));
+  });
+
+  return card;
+}
+
+// Reached from the project page, not a board — `boardState` isn't already
+// pointed at this item's board the way it is when a card is opened from
+// the board or Backlog page, so it's set explicitly before opening the
+// modal (which reads `boardState.projectId`/`boardState.boardId` to load
+// components, members and sibling items for the parent picker).
+function releaseItemRow(item, projectId) {
+  const li = document.createElement('li');
+  li.className = 'release-item-row';
+  li.innerHTML =
+    `<a href="#" data-open-item="${item.id}">` +
+      `<span class="key-pill">${esc(item.key)}</span>` +
+      `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
+      `<span class="title">${esc(item.title)}</span>` +
+      `<span class="status-tag">${item.status_detail ? esc(item.status_detail.name) : ''}</span>` +
+    `</a>`;
+  li.querySelector('[data-open-item]').addEventListener('click', async (e) => {
+    e.preventDefault();
+    boardState.projectId = projectId;
+    boardState.boardId = item.board;
+    // The modal's Status dropdown reads `boardState.statuses` — already
+    // populated when a card is opened from its own board or the Backlog
+    // page, but not when reached from here, so it's fetched explicitly
+    // first rather than opening the modal with an empty Status control.
+    try { boardState.statuses = await Store.listStatuses(projectId); } catch (err) { /* modal shows what it can */ }
+    openWorkItemModal(item.id);
+  });
   return li;
 }
 
@@ -1943,6 +2092,8 @@ function workItemCard(item) {
 
   const parentChip = item.parent_detail
     ? `<span class="parent-chip">${esc(item.parent_detail.key)}</span>` : '';
+  const releaseChip = item.release_detail
+    ? `<span class="release-chip-sm state-${item.release_detail.status}">${esc(item.release_detail.name)}</span>` : '';
   const who = item.assignee_detail
     ? `<span class="who-chip">${esc(item.assignee_detail.display_name)}</span>` : '';
   const labelChips = (item.labels_detail || [])
@@ -1959,7 +2110,7 @@ function workItemCard(item) {
     `</div>` +
     `<p class="card-title">${esc(item.title)}</p>` +
     (labelChips ? `<div class="card-labels">${labelChips}</div>` : '') +
-    `<div class="card-meta">${parentChip}${who}</div>`;
+    `<div class="card-meta">${parentChip}${releaseChip}${who}</div>`;
 
   const openOrToggle = () => {
     if (boardState.selectMode) { toggleCardSelection(item.id, el); return; }
@@ -2269,15 +2420,16 @@ function addWorkItemControl(status) {
 /* Work item detail modal -------------------------------------------------- */
 
 async function openWorkItemModal(itemId) {
-  let item, users, projectComponents, boardItems, members, allLabels;
+  let item, users, projectComponents, boardItems, members, allLabels, projectReleases;
   try {
-    [item, users, projectComponents, boardItems, members, allLabels] = await Promise.all([
+    [item, users, projectComponents, boardItems, members, allLabels, projectReleases] = await Promise.all([
       Store.getWorkItem(itemId),
       Store.listUsers(),
       Store.listComponents(boardState.projectId),
       Store.listBoardWorkItems(boardState.boardId),
       Store.listMembers(boardState.projectId),
       Store.listLabels(),
+      Store.listReleases(boardState.projectId),
     ]);
   } catch (err) { return handle(err); }
 
@@ -2328,6 +2480,13 @@ async function openWorkItemModal(itemId) {
         .join('')
     : '';
 
+  // Any project member can tag a work item with an existing release — an
+  // ordinary edit, same tier as Status/Priority/Assignee, not gated behind
+  // the Owner/Admin check that creating or renaming one requires.
+  const releaseOptions = projectReleases.map(r =>
+    `<option value="${r.id}" ${item.release === r.id ? 'selected' : ''}>${esc(r.name)} — ${Logic.RELEASE_STATUS_LABEL[r.status]}</option>`
+  ).join('');
+
   const body = `
     <div class="modal-head">
       <p class="eyebrow">${esc(item.key)} · <span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span></p>
@@ -2357,10 +2516,14 @@ async function openWorkItemModal(itemId) {
         <select name="assignee"><option value="">Unassigned</option>${assigneeOptions}</select>
       </label>
     </div>
-    <div class="grid-2">
+    <div class="grid-3">
       <label class="field">
         <span>Due</span>
         <input type="date" name="due_date" value="${item.due_date || ''}">
+      </label>
+      <label class="field">
+        <span>Release</span>
+        <select name="release"><option value="">No release</option>${releaseOptions}</select>
       </label>
       ${showParentField ? `
       <label class="field">
@@ -2430,6 +2593,7 @@ async function openWorkItemModal(itemId) {
       priority: Number(modal.querySelector('[name=priority]').value),
       due_date: modal.querySelector('[name=due_date]').value || null,
       assignee: modal.querySelector('[name=assignee]').value || null,
+      release: modal.querySelector('[name=release]').value || null,
       component_ids: componentIds,
       labels: labelInput.getNames(),
     };
