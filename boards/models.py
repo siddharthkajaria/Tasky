@@ -189,6 +189,37 @@ class WorkItemStatus(models.Model):
         return f"{self.name} ({self.project})"
 
 
+class Sprint(models.Model):
+    class State(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        ACTIVE = "active", "Active"
+        COMPLETED = "completed", "Completed"
+
+    board = models.ForeignKey(Board, on_delete=models.CASCADE, related_name="sprints")
+    name = models.CharField(max_length=120)
+    goal = models.CharField(max_length=280, blank=True)
+    state = models.CharField(max_length=10, choices=State.choices, default=State.PLANNED)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="sprints_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.board})"
+
+    @property
+    def project(self):
+        return self.board.project
+
+
 class CustomField(models.Model):
     class FieldType(models.TextChoices):
         TEXT_SHORT = "text_short", "Short text"

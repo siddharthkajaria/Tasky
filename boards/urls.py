@@ -12,6 +12,7 @@ from .views import (
     ScreenFieldViewSet,
     ScreenViewSet,
     SearchView,
+    SprintViewSet,
     WorkItemLinkViewSet,
     WorkItemStatusViewSet,
     WorkItemViewSet,
@@ -46,6 +47,26 @@ urlpatterns = router.urls + [
         "projects/<int:project_pk>/statuses/<int:pk>/",
         WorkItemStatusViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
         name="project-status-detail",
+    ),
+    path(
+        "boards/<int:board_pk>/sprints/",
+        SprintViewSet.as_view({"get": "list", "post": "create"}),
+        name="board-sprints",
+    ),
+    path(
+        "sprints/<int:pk>/",
+        SprintViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"}),
+        name="sprint-detail",
+    ),
+    path(
+        "sprints/<int:pk>/start/",
+        SprintViewSet.as_view({"post": "start"}),
+        name="sprint-start",
+    ),
+    path(
+        "sprints/<int:pk>/complete/",
+        SprintViewSet.as_view({"post": "complete"}),
+        name="sprint-complete",
     ),
     path(
         "fields/<int:field_pk>/options/",

@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from accounts.serializers import UserSerializer
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Label, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Board, Comment, Component, CustomField, FieldOption, Label, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
 from .services import LABEL_PALETTE, apply_custom_fields, custom_fields_read_map, custom_fields_write_error, resolve_default_status, resolve_labels
 
 VALID_PARENT_TYPES = {
@@ -35,6 +35,10 @@ def can_manage_components(role):
 
 
 def can_manage_statuses(role):
+    return role in ("owner", "admin")
+
+
+def can_manage_sprints(role):
     return role in ("owner", "admin")
 
 
@@ -109,6 +113,31 @@ class WorkItemStatusSerializer(serializers.ModelSerializer):
         if not clean:
             raise serializers.ValidationError("This field may not be blank.")
         return clean
+
+
+class SprintSerializer(serializers.ModelSerializer):
+    created_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Sprint
+        fields = ["id", "board", "name", "goal", "state", "start_date", "end_date", "created_by", "created_at"]
+        read_only_fields = ["board", "state", "start_date", "end_date", "created_by", "created_at"]
+
+    def validate_name(self, value):
+        clean = value.strip()
+        if not clean:
+            raise serializers.ValidationError("This field may not be blank.")
+        return clean
+
+
+class SprintSummarySerializer(serializers.ModelSerializer):
+    """Embedded on a work item as `sprint_detail` — mirrors how
+    `WorkItemStatusSummarySerializer` trims down `WorkItemStatusSerializer`
+    for the same reason."""
+
+    class Meta:
+        model = Sprint
+        fields = ["id", "name", "state", "start_date", "end_date"]
 
 
 class FieldOptionSerializer(serializers.ModelSerializer):

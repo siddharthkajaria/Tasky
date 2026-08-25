@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db import models, transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -13,7 +14,7 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
 from .serializers import (
     BoardSerializer,
     CommentSerializer,
@@ -25,11 +26,13 @@ from .serializers import (
     ScreenFieldSerializer,
     ScreenSerializer,
     SearchResultSerializer,
+    SprintSerializer,
     WorkItemLinkSerializer,
     WorkItemSerializer,
     WorkItemSummarySerializer,
     WorkItemStatusSerializer,
     can_manage_components,
+    can_manage_sprints,
     can_manage_statuses,
     can_manage_screen_assignments,
     user_can_manage_definitions,
@@ -613,6 +616,90 @@ class WorkItemStatusViewSet(viewsets.ModelViewSet):
             if status.position != index:
                 status.position = index
                 status.save(update_fields=["position"])
+
+
+class SprintViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete"]
+    serializer_class = SprintSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    pagination_class = None
+
+    def get_board(self):
+        return get_object_or_404(Board, pk=self.kwargs["board_pk"])
+
+    def get_queryset(self):
+        qs = Sprint.objects.all()
+        if "board_pk" in self.kwargs:
+            qs = qs.filter(board_id=self.kwargs["board_pk"])
+        return qs
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # Only list/create are nested under a board in the URL (see
+        # boards/urls.py) — detail routes and the start/complete actions
+        # resolve a Sprint directly by id and rely on get_object()'s own
+        # check_object_permissions() call, which works because Sprint has
+        # a `project` property (see the model).
+        if self.action in ("list", "create"):
+            self.check_object_permissions(request, self.get_board().project)
+
+    def _role(self, sprint):
+        return sprint.board.project.memberships.get(user=self.request.user).role
+
+    def perform_create(self, serializer):
+        board = self.get_board()
+        if not can_manage_sprints(board.project.memberships.get(user=self.request.user).role):
+            raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
+        serializer.save(board=board, created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        if not can_manage_sprints(self._role(serializer.instance)):
+            raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_sprints(self._role(instance)):
+            raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
+        if instance.state != Sprint.State.PLANNED:
+            raise ValidationError({"detail": "Only a planned sprint can be deleted."})
+        # Unguarded against "still has items scheduled into it" — WorkItem.sprint
+        # doesn't exist until Task 2, so there's nothing to check yet. Task 2
+        # replaces this method with the real "still has N items" guard.
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def start(self, request, pk=None):
+        sprint = self.get_object()
+        if not can_manage_sprints(self._role(sprint)):
+            raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
+        if sprint.state != Sprint.State.PLANNED:
+            raise ValidationError({"detail": "Only a planned sprint can be started."})
+        with transaction.atomic():
+            board = Board.objects.select_for_update().get(pk=sprint.board_id)
+            active = Sprint.objects.filter(board=board, state=Sprint.State.ACTIVE).exclude(pk=sprint.pk).first()
+            if active:
+                raise ValidationError(
+                    {"detail": f'"{active.name}" is already active on this board. Complete it first.'}
+                )
+            sprint.state = Sprint.State.ACTIVE
+            sprint.start_date = timezone.now().date()
+            sprint.save(update_fields=["state", "start_date"])
+        return Response(SprintSerializer(sprint).data)
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        sprint = self.get_object()
+        if not can_manage_sprints(self._role(sprint)):
+            raise PermissionDenied("Only this project's Owner or Admins can manage sprints.")
+        if sprint.state != Sprint.State.ACTIVE:
+            raise ValidationError({"detail": "Only an active sprint can be completed."})
+        sprint.state = Sprint.State.COMPLETED
+        sprint.end_date = timezone.now().date()
+        sprint.save(update_fields=["state", "end_date"])
+        # Task 2 adds: return this sprint's remaining work items to the
+        # backlog. WorkItem.sprint doesn't exist yet, so there's nothing to
+        # move — a sprint completed in this task's tests is always empty.
+        return Response(SprintSerializer(sprint).data)
 
 
 class ProjectScreenAssignmentsView(APIView):
