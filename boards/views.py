@@ -614,6 +614,14 @@ class ReleaseViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("You don't have permission to manage releases.")
         instance.delete()
 
+    @action(detail=True, methods=["get"], url_path="work-items")
+    def work_items(self, request, project_pk=None, pk=None):
+        release = self.get_object()
+        items = release.work_items.select_related(
+            "assignee", "created_by", "parent", "parent__status", "status", "sprint"
+        ).prefetch_related("components", "labels", "field_values__field")
+        return Response(WorkItemSerializer(items, many=True).data)
+
 
 class LabelViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "patch", "delete"]

@@ -98,7 +98,9 @@ other removal).
 
 Every work item response carries `sprint` (the current `Sprint` id, or `null` for the backlog) and `sprint_detail` (a read-only nested `{id, name, state, start_date, end_date}` object, or `null` to match). A freshly created work item defaults to the backlog (`sprint: null`) unless `sprint` is given explicitly on create.
 
-Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `status_detail` (a nested `{id, name, category}` object for the current `status`, returned alongside the raw `status` id), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list), and `labels_detail` (the full nested `{id, name, color}` `Label` objects for the current `labels`). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
+Every work item response also carries `release` (the current `Release` id, or `null`) and `release_detail` (a read-only nested `{id, project, name, status, release_date}` object, or `null` to match). A freshly created work item defaults to `release: null` unless `release` is given explicitly on create. **Unlike `status`/`board`/`sprint`, `release` has no immutability restriction on `PATCH`/`PUT`** — it's an ordinary writable field, the same as `components`: any project member can set or clear it in a plain edit, alongside other field changes, in one request. A `release` from a different project than the work item's is rejected with `400` (`{"release": "Release must belong to this item's project."}`). See Releases, above, for the release endpoints themselves.
+
+Work item responses also carry read-only extras beyond the writable fields above: `assignee_detail` (a nested `{id, username, display_name}` object for the current `assignee`, returned alongside the raw `assignee` id), `created_by` (a nested user object), `priority_label` (the human-readable form of `priority`), `status_detail` (a nested `{id, name, category}` object for the current `status`, returned alongside the raw `status` id), `parent_detail` (a nested summary of the parent — `{id, key, title, item_type, status}` — alongside the raw `parent` id, or `null` with no parent), `components_detail` (the full nested `Component` objects for the current `components`, alongside the raw `components` id list), `release_detail` (see above), and `labels_detail` (the full nested `{id, name, color}` `Label` objects for the current `labels`). `key` is likewise response-only, system-generated on create. None of these are accepted on write.
 
 **`labels` is the one field on this endpoint that differs from every other tagging mechanism here: it's write-only and takes label *names* (strings), not ids.** `POST`/`PATCH` `{"labels": ["urgent", "needs-design"]}` resolves each name case-insensitively against the existing `Label` table — a name that already exists (in any case) reuses that row, and a name that doesn't exist yet is created on the spot with a deterministically-hashed color from the same 8-color palette `/api/labels/` uses. Two names in the same write that differ only by case collapse to a single label. A blank/whitespace-only name is rejected with `400: {"labels": "A label name can't be blank."}` and the whole write fails — no work item or label is created. `PATCH` **replaces** the full label set; omitting `labels` from a `PATCH` leaves the work item's existing labels untouched. Applying or inventing a label this way needs only ordinary work-item edit permission (project membership) — no Owner check, unlike renaming/recoloring/deleting a `Label` row directly via `/api/labels/{id}/` (see Labels, below).
 
@@ -150,6 +152,19 @@ Import never supplies custom field values, so a row targeting an `item_type` who
 | PATCH/DELETE | `/api/projects/{id}/components/{id}/` | Owner/Admin only |
 
 Any project member can apply an existing component to a work item via `PATCH /api/work-items/{id}/ {"components": [...]}"` — a component from a different project than the work item's is rejected with `400`.
+
+## Releases
+| Method | Path | Notes |
+|---|---|---|
+| GET/POST | `/api/projects/{id}/releases/` | GET is readable by any project member; POST is Owner/Admin only |
+| GET/PATCH/DELETE | `/api/projects/{id}/releases/{id}/` | GET is readable by any project member; PATCH/DELETE are Owner/Admin only |
+| GET | `/api/projects/{id}/releases/{id}/work-items/` | every work item in this project currently tagged with this release; any project member |
+
+A `Release` has `{id, project, name, status, release_date}`. `project` is read-only (set from the URL). `name` is required and unique per project (case-insensitive) — a duplicate is rejected with 400 (`{"name": "\"<name>\" already exists."}`). `status` is one of `unreleased`, `released`, `archived` and defaults to `unreleased` on create — it is not settable at creation time via the request body, only via a later `PATCH`. `release_date` is optional.
+
+**`DELETE /api/projects/{id}/releases/{id}/` has no guard against the release still being in use**, the same as deleting a `Label`. Any work item tagged with the deleted release has its `release` cleared (set to `null`); the work items themselves are untouched.
+
+Any project member can apply an existing release to a work item via `PATCH /api/work-items/{id}/ {"release": <Release id or null>}`. Unlike `status`/`sprint`, this is an **ordinary writable field with no immutability restriction** — it can be changed via a plain `PATCH`, alongside any other edit, in one request, with no dedicated action endpoint. A release from a different project than the work item's is rejected with `400` (`{"release": "Release must belong to this item's project."}`).
 
 ## Labels
 | Method | Path | Notes |

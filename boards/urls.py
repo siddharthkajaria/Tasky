@@ -50,6 +50,11 @@ urlpatterns = router.urls + [
         name="project-release-detail",
     ),
     path(
+        "projects/<int:project_pk>/releases/<int:pk>/work-items/",
+        ReleaseViewSet.as_view({"get": "work_items"}),
+        name="project-release-work-items",
+    ),
+    path(
         "projects/<int:project_pk>/statuses/",
         WorkItemStatusViewSet.as_view({"get": "list", "post": "create"}),
         name="project-statuses",

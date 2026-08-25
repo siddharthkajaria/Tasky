@@ -264,6 +264,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
     priority_label = serializers.CharField(source="get_priority_display", read_only=True)
     parent_detail = WorkItemSummarySerializer(source="parent", read_only=True)
     components_detail = ComponentSerializer(source="components", many=True, read_only=True)
+    release_detail = ReleaseSerializer(source="release", read_only=True)
     labels = serializers.ListField(child=serializers.CharField(allow_blank=True, max_length=80), required=False, write_only=True)
     labels_detail = LabelSummarySerializer(source="labels", many=True, read_only=True)
     status_detail = WorkItemStatusSummarySerializer(source="status", read_only=True)
@@ -277,7 +278,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
             "id", "key", "board", "item_type", "title", "description",
             "status", "status_detail", "sprint", "sprint_detail", "priority", "priority_label", "due_date",
             "assignee", "assignee_detail", "parent", "parent_detail",
-            "components", "components_detail", "labels", "labels_detail", "custom_fields",
+            "components", "components_detail", "release", "release_detail", "labels", "labels_detail", "custom_fields",
             "position", "created_by", "created_at", "updated_at",
         ]
         read_only_fields = ["key", "position"]
@@ -351,6 +352,11 @@ class WorkItemSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"sprint": "Sprint must belong to this item's board."})
             if sprint.state == Sprint.State.COMPLETED:
                 raise serializers.ValidationError({"sprint": "Can't schedule into a completed sprint."})
+
+        if attrs.get("release") is not None:
+            release = attrs["release"]
+            if release.project_id != board.project_id:
+                raise serializers.ValidationError({"release": "Release must belong to this item's project."})
 
         if is_create or "custom_fields" in attrs:
             # On create, the check must run even when `custom_fields` is

@@ -63,6 +63,9 @@ class WorkItem(models.Model):
     sprint = models.ForeignKey(
         "Sprint", on_delete=models.SET_NULL, null=True, blank=True, related_name="work_items"
     )
+    release = models.ForeignKey(
+        "Release", on_delete=models.SET_NULL, null=True, blank=True, related_name="work_items"
+    )
     backlog_position = models.IntegerField(default=0)
     position = models.IntegerField(default=0)
     created_by = models.ForeignKey(
