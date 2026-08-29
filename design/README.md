@@ -22,7 +22,7 @@ prototype of the whole product, not a one-off mockup.
 | 7 — Releases | `../docs/superpowers/specs/2026-08-24-tasky-releases-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
 | 8 — Task Detail UX | `../docs/superpowers/specs/2026-08-24-tasky-task-detail-ux-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
 | 9 — Permissions & Admin | `../docs/superpowers/specs/2026-08-24-tasky-permissions-admin-design.md` | Signed off, **shipped to production** (`accounts/views.py`, `projects/models.py`) |
-| 10 — Project Types & Setup | `../docs/superpowers/specs/2026-08-24-tasky-project-types-setup-design.md` | Signed off — **prototype below, backend implementation next** |
+| 10 — Project Types & Setup | `../docs/superpowers/specs/2026-08-24-tasky-project-types-setup-design.md` | Signed off, **shipped to production** (`boards/services.py`, `projects/views.py`) |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
