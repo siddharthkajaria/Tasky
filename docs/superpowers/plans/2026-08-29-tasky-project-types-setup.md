@@ -42,7 +42,7 @@ import pytest
 
 from boards.services import PROJECT_TEMPLATES, STATUS_PRESETS, seed_default_statuses
 from boards.models import WorkItemStatus
-from projects.models import Project, ProjectMembership
+from projects.models import Project
 
 
 def test_every_status_preset_covers_all_three_categories():
