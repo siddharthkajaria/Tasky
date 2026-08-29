@@ -246,6 +246,47 @@ Each status has a `category` (one of `todo`, `in_progress`, `done`) and a `name`
 
 When a status is deleted, all other statuses in the project are reordered (`position` values are renormalised to `0..n-1`).
 
+## Automation
+Project-scoped rules: when a trigger fires, run exactly one action — no chaining, no
+cascading (an automation-caused change never re-triggers rule evaluation).
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/projects/{id}/automation-rules/` | any project member |
+| POST | `/api/projects/{id}/automation-rules/` | `{name, trigger_type, trigger_filter, action_type, action_config, is_active?}`; Owner/Admin only |
+| GET | `/api/projects/{id}/automation-rules/{id}/` | any project member |
+| PATCH | `/api/projects/{id}/automation-rules/{id}/` | any of the above, plus `position` (cascades to siblings); Owner/Admin only |
+| DELETE | `/api/projects/{id}/automation-rules/{id}/` | Owner/Admin only; renumbers remaining siblings |
+
+**`trigger_type`** is `work_item_created` or `status_changed`. **`trigger_filter`** shape
+depends on it:
+- `work_item_created`: `{item_type: <ItemType>|null}` — `null` matches every item type.
+- `status_changed`: `{from_status: <id>|null, to_status: <id>|null, to_category: <category>|null}`
+  — `to_status`/`to_category` are mutually exclusive (`400` if both set); everything `null`
+  matches any origin/destination.
+
+**`action_type`** is `set_assignee`, `apply_label`, `remove_label`, or `change_status`.
+**`action_config`** shape depends on it:
+- `set_assignee`: `{mode: "fixed"|"actor"|"unassign", user_id?}` — `user_id` required (and
+  validated as a project member) only when `mode: "fixed"`.
+- `apply_label`/`remove_label`: `{label_name}` — `apply_label` matches-or-creates the same
+  way a manual `labels` write does; `remove_label` no-ops if the item doesn't have it.
+- `change_status`: `{status_id}` — must belong to the rule's own project.
+
+**Governance reuses the Owner/Admin tier** — same as Components and Statuses. Any project
+member can `GET` the list (so it's clear why a card changed on its own); only Owner/Admin
+can create, edit, delete, reorder, or deactivate.
+
+**Bulk operations do not fire automation.** `POST /api/work-items/bulk-move/` writes status
+directly and bypasses the single `move_work_item()` chokepoint this feature hooks into —
+only the single-item `POST /api/work-items/{id}/move/` and `POST /api/work-items/` fire
+rules.
+
+**Deleting a `WorkItemStatus` still referenced by a rule's `trigger_filter.from_status`,
+`trigger_filter.to_status`, or `action_config.status_id` is rejected with `400`, naming the
+rule.** A `to_category` reference is a category, not a specific status, and does not block
+deletion.
+
 ## Sprints & Backlog
 | Method | Path | Notes |
 |---|---|---|

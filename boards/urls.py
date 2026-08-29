@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     AttachmentViewSet,
+    AutomationRuleViewSet,
     BoardViewSet,
     CommentViewSet,
     ComponentViewSet,
@@ -65,6 +66,16 @@ urlpatterns = router.urls + [
         "projects/<int:project_pk>/statuses/<int:pk>/",
         WorkItemStatusViewSet.as_view({"patch": "partial_update", "delete": "destroy"}),
         name="project-status-detail",
+    ),
+    path(
+        "projects/<int:project_pk>/automation-rules/",
+        AutomationRuleViewSet.as_view({"get": "list", "post": "create"}),
+        name="project-automation-rules",
+    ),
+    path(
+        "projects/<int:project_pk>/automation-rules/<int:pk>/",
+        AutomationRuleViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"}),
+        name="project-automation-rule-detail",
     ),
     path(
         "boards/<int:board_pk>/sprints/",

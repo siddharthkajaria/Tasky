@@ -14,9 +14,10 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Attachment, Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
+from .models import Attachment, AutomationRule, Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
 from .serializers import (
     AttachmentSerializer,
+    AutomationRuleSerializer,
     BoardSerializer,
     CommentSerializer,
     ComponentSerializer,
@@ -33,6 +34,7 @@ from .serializers import (
     WorkItemSerializer,
     WorkItemSummarySerializer,
     WorkItemStatusSerializer,
+    can_manage_automation,
     can_manage_components,
     can_manage_releases,
     can_manage_sprints,
@@ -40,6 +42,7 @@ from .serializers import (
     can_manage_screen_assignments,
     user_can_manage_definitions,
 )
+from .automation import action_config_error, trigger_filter_error
 from .services import import_work_items_from_csv, move_work_item, next_backlog_position, next_position, resolve_labels, schedule_work_item
 
 
@@ -788,6 +791,25 @@ class WorkItemStatusViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"detail": f'"{instance.name}" is still used by {in_use} work item{"" if in_use == 1 else "s"}. Move {"it" if in_use == 1 else "them"} first.'}
             )
+
+        # sub-project 11 — a rule can reference a status in its
+        # trigger_filter (from_status/to_status) or action_config
+        # (status_id); deleting it out from under a rule would leave that
+        # rule silently broken. Checked in Python, not a JSON-field query
+        # lookup — this project's rule count is always small, and it
+        # sidesteps any MySQL JSON-lookup type-coercion edge case entirely.
+        referencing = [
+            r for r in AutomationRule.objects.filter(project=instance.project)
+            if (r.trigger_filter or {}).get("from_status") == instance.id
+            or (r.trigger_filter or {}).get("to_status") == instance.id
+            or (r.action_config or {}).get("status_id") == instance.id
+        ]
+        if referencing:
+            names = ", ".join(f'"{r.name}"' for r in referencing)
+            raise ValidationError(
+                {"detail": f'"{instance.name}" is still referenced by automation rule(s) {names}.'}
+            )
+
         remaining = WorkItemStatus.objects.filter(
             project=instance.project, category=instance.category
         ).exclude(pk=instance.pk)
@@ -801,6 +823,100 @@ class WorkItemStatusViewSet(viewsets.ModelViewSet):
             if status.position != index:
                 status.position = index
                 status.save(update_fields=["position"])
+
+
+class AutomationRuleViewSet(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete"]
+    serializer_class = AutomationRuleSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    pagination_class = None
+
+    def get_project(self):
+        from projects.models import Project
+
+        return get_object_or_404(Project, pk=self.kwargs["project_pk"])
+
+    def get_queryset(self):
+        return AutomationRule.objects.filter(project_id=self.kwargs["project_pk"]).select_related("created_by")
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if self.action in ("list", "create"):
+            self.check_object_permissions(request, self.get_project())
+
+    def perform_create(self, serializer):
+        project = self.get_project()
+        role = project.memberships.get(user=self.request.user).role
+        if not can_manage_automation(role):
+            raise PermissionDenied("You don't have permission to manage this project's automation rules.")
+
+        trigger_type = serializer.validated_data["trigger_type"]
+        trigger_filter = serializer.validated_data.get("trigger_filter") or {}
+        action_type = serializer.validated_data["action_type"]
+        action_config = serializer.validated_data.get("action_config") or {}
+
+        error = trigger_filter_error(trigger_type, trigger_filter, project)
+        if error:
+            raise ValidationError({"trigger_filter": error})
+        error = action_config_error(action_type, action_config, project)
+        if error:
+            raise ValidationError({"action_config": error})
+
+        position = AutomationRule.objects.filter(project=project).count()
+        serializer.save(project=project, position=position, created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        role = instance.project.memberships.get(user=self.request.user).role
+        if not can_manage_automation(role):
+            raise PermissionDenied("You don't have permission to manage this project's automation rules.")
+
+        trigger_type = serializer.validated_data.get("trigger_type", instance.trigger_type)
+        trigger_filter = serializer.validated_data.get("trigger_filter", instance.trigger_filter)
+        action_type = serializer.validated_data.get("action_type", instance.action_type)
+        action_config = serializer.validated_data.get("action_config", instance.action_config)
+
+        if "trigger_filter" in serializer.validated_data or "trigger_type" in serializer.validated_data:
+            error = trigger_filter_error(trigger_type, trigger_filter, instance.project)
+            if error:
+                raise ValidationError({"trigger_filter": error})
+        if "action_config" in serializer.validated_data or "action_type" in serializer.validated_data:
+            error = action_config_error(action_type, action_config, instance.project)
+            if error:
+                raise ValidationError({"action_config": error})
+
+        serializer.save()
+        if "position" in self.request.data:
+            self._reposition(instance)
+
+    def _reposition(self, instance):
+        try:
+            target = max(0, int(self.request.data["position"]))
+        except (TypeError, ValueError):
+            raise ValidationError({"position": "Must be a whole number."})
+        siblings = list(
+            AutomationRule.objects.filter(project=instance.project)
+            .exclude(pk=instance.pk)
+            .order_by("position", "id")
+        )
+        target = min(target, len(siblings))
+        siblings.insert(target, instance)
+        for index, rule in enumerate(siblings):
+            if rule.position != index:
+                rule.position = index
+                rule.save(update_fields=["position"])
+
+    def perform_destroy(self, instance):
+        role = instance.project.memberships.get(user=self.request.user).role
+        if not can_manage_automation(role):
+            raise PermissionDenied("You don't have permission to manage this project's automation rules.")
+        project = instance.project
+        instance.delete()
+        siblings = list(AutomationRule.objects.filter(project=project).order_by("position", "id"))
+        for index, rule in enumerate(siblings):
+            if rule.position != index:
+                rule.position = index
+                rule.save(update_fields=["position"])
 
 
 class SprintViewSet(viewsets.ModelViewSet):
