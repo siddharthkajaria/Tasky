@@ -174,7 +174,39 @@ def import_work_items_from_csv(board, csv_file, user):
     return {"imported": imported, "failed": failed}
 
 
-_DEFAULT_STATUSES = [("To Do", "todo", 0), ("In Progress", "in_progress", 1), ("Done", "done", 2)]
+STATUS_PRESETS = {
+    "simple": [("To Do", "todo"), ("In Progress", "in_progress"), ("Done", "done")],
+    "detailed": [
+        ("To Do", "todo"),
+        ("In Progress", "in_progress"),
+        ("In Review", "in_progress"),
+        ("Blocked", "in_progress"),
+        ("Done", "done"),
+    ],
+}
+
+PROJECT_TEMPLATES = {
+    "blank": {
+        "name": "Blank",
+        "description": "Three statuses, no components — today's default. Good for anything "
+                        "that doesn't fit a more specific template.",
+        "status_preset": "simple",
+        "components": [],
+    },
+    "software": {
+        "name": "Software Project",
+        "description": "An engineering-shaped workflow with room for review and blockers, "
+                        "plus a starter set of components to tag work by.",
+        "status_preset": "detailed",
+        "components": ["Frontend", "Backend", "Infrastructure"],
+    },
+    "bugs": {
+        "name": "Bug Tracking",
+        "description": "For triaging and tracking defects through to verification.",
+        "status_preset": "detailed",
+        "components": [],
+    },
+}
 
 LABEL_PALETTE = [
     "#6E4FA3", "#2E7D5B", "#3B3F8F", "#A32218",
@@ -239,30 +271,35 @@ def resolve_labels(names, user):
     return resolved
 
 
-def seed_default_statuses(project) -> dict:
-    """The 3 default statuses every project starts with. Idempotent: if the
-    project already has a status in every one of the 3 default categories,
-    returns its existing todo/in_progress/done rows instead of creating
-    duplicates. If it has SOME but not all of the 3 — e.g. its `todo`-
-    category status was deleted or recategorized away via `/admin/`, which
-    has no guard against leaving a category empty the way the API does —
-    this tops up only the missing categories, so the project ends up with
-    at least one status in each of the 3 without touching the ones already
-    there. (Ambiguity when a project already has 2+ statuses in the SAME
-    category — which one "the" category's status is — is a separate,
-    deliberately-out-of-scope non-goal; only seed_demo hits it, on fresh
-    projects, with no live bug.)
+def seed_default_statuses(project, preset_key="simple") -> dict:
+    """The default statuses every project starts with, seeded from
+    STATUS_PRESETS[preset_key] (sub-project 10 — Project Types & Setup;
+    preset_key defaults to "simple", which is byte-for-byte what this
+    function's old hardcoded 3-status list produced, so every existing
+    caller that doesn't pass preset_key keeps working unchanged).
+    Idempotent: if the project already has a status in every one of the
+    preset's categories, returns its existing todo/in_progress/done rows
+    instead of creating duplicates. If it has SOME but not all — e.g. its
+    `todo`-category status was deleted or recategorized away via
+    `/admin/`, which has no guard against leaving a category empty the
+    way the API does — this tops up only the missing categories, so the
+    project ends up with at least one status in each without touching the
+    ones already there. (Ambiguity when a project already has 2+ statuses
+    in the SAME category — which one "the" category's status is — is a
+    separate, deliberately-out-of-scope non-goal; only seed_demo hits it,
+    on fresh projects, with no live bug.)
 
     Reached two ways, deliberately: called explicitly from
-    ProjectViewSet.perform_create (so a project created through the real API
-    has 3 statuses immediately), and reached indirectly — via
+    ProjectViewSet.perform_create (so a project created through the real
+    API has statuses immediately), and reached indirectly — via
     resolve_default_status()'s own fallback, below — from WorkItem.save()
     (so a project created directly via the ORM — every existing test
-    fixture, seed_demo, etc. — still works without being rewritten to seed
-    anything itself)."""
+    fixture, seed_demo, etc. — still works without being rewritten to
+    seed anything itself)."""
+    preset = STATUS_PRESETS[preset_key]
     existing_qs = list(WorkItemStatus.objects.filter(project=project))
     existing = {s.category: s for s in existing_qs}
-    missing = [d for d in _DEFAULT_STATUSES if d[1] not in existing]
+    missing = [d for d in preset if d[1] not in existing]
     if not missing:
         # Whatever exists, return a dict good enough for resolve_default_status
         # to work with — a project that already has custom statuses is not
@@ -279,7 +316,7 @@ def seed_default_statuses(project) -> dict:
     next_position = 1 + max((s.position for s in existing_qs), default=-1)
 
     created = []
-    for name, category, _position in missing:
+    for name, category in missing:
         candidate = name
         suffix = 2
         while candidate in taken_names:
