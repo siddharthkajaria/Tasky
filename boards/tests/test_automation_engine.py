@@ -1,5 +1,6 @@
 import pytest
 
+from boards.automation import action_config_error, trigger_filter_error
 from boards.models import AutomationRule, Board, Label, WorkItem, WorkItemStatus
 from boards.services import seed_default_statuses
 from projects.models import Project, ProjectMembership
@@ -228,3 +229,104 @@ def test_a_different_projects_rules_never_fire_here(auth_client, board, project,
     )
     item = WorkItem.objects.get(id=response.json()["id"])
     assert not item.labels.exists()
+
+
+# ---- fix-round regression tests: transactional create + int/str status ids ----
+
+
+@pytest.mark.django_db
+def test_create_path_rolls_back_all_automation_on_a_later_rule_failure(auth_client, board, project, user):
+    """WorkItemSerializer.create() must run the triggering write and every
+    matching create-rule inside one transaction: if a later rule's action
+    fails, an earlier rule's already-applied side effect (a label, here)
+    must not be left committed alongside a work item whose creation never
+    really finished."""
+    make_rule(
+        project, user, name="First", position=0,
+        action_type=AutomationRule.ActionType.APPLY_LABEL,
+        action_config={"label_name": "should-not-persist"},
+    )
+    make_rule(
+        project, user, name="Second", position=1,
+        action_type=AutomationRule.ActionType.CHANGE_STATUS,
+        # A status id that can't possibly exist forces move_work_item's
+        # bulk_update to violate the WorkItemStatus foreign key, raising
+        # instead of silently no-oping (unlike a non-numeric status_id,
+        # which _to_status_id now treats as a no-op).
+        action_config={"status_id": 999999999},
+    )
+    with pytest.raises(Exception):
+        auth_client.post(
+            "/api/work-items/",
+            {"board": board.id, "item_type": "task", "title": "Item"},
+            content_type="application/json",
+        )
+    assert not WorkItem.objects.filter(title="Item").exists()
+    assert not Label.objects.filter(name="should-not-persist").exists()
+
+
+@pytest.mark.django_db
+def test_trigger_filter_error_coerces_a_stringy_to_status_and_normalizes_it(project, statuses):
+    trigger_filter = {"to_status": str(statuses["done"].id)}
+    assert trigger_filter_error(AutomationRule.TriggerType.STATUS_CHANGED, trigger_filter, project) is None
+    assert trigger_filter["to_status"] == statuses["done"].id
+
+
+@pytest.mark.django_db
+def test_trigger_filter_error_rejects_a_non_numeric_to_status(project, statuses):
+    error = trigger_filter_error(
+        AutomationRule.TriggerType.STATUS_CHANGED, {"to_status": "not-a-number"}, project
+    )
+    assert error is not None
+
+
+@pytest.mark.django_db
+def test_action_config_error_coerces_a_stringy_status_id_and_normalizes_it(project, statuses):
+    action_config = {"status_id": str(statuses["done"].id)}
+    assert action_config_error(AutomationRule.ActionType.CHANGE_STATUS, action_config, project) is None
+    assert action_config["status_id"] == statuses["done"].id
+
+
+@pytest.mark.django_db
+def test_action_config_error_rejects_a_non_numeric_status_id(project, statuses):
+    error = action_config_error(AutomationRule.ActionType.CHANGE_STATUS, {"status_id": "not-a-number"}, project)
+    assert error is not None
+
+
+@pytest.mark.django_db
+def test_status_changed_trigger_matches_a_stringy_to_status_stored_in_the_db(auth_client, board, statuses, project, user):
+    """A rule created directly against the model (bypassing the not-yet-
+    built AutomationRuleViewSet's validation) with a JSON string to_status
+    must still match at runtime — the matcher, not just the validator, is
+    responsible for int/str consistency."""
+    item = WorkItem.objects.create(board=board, title="Item", status=statuses["todo"])
+    make_rule(
+        project, user,
+        trigger_type=AutomationRule.TriggerType.STATUS_CHANGED,
+        trigger_filter={"to_status": str(statuses["done"].id)},
+        action_config={"label_name": "auto"},
+    )
+    response = auth_client.post(
+        f"/api/work-items/{item.id}/move/",
+        {"status": statuses["done"].id, "position": 0},
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+    item.refresh_from_db()
+    assert set(item.labels.values_list("name", flat=True)) == {"auto"}
+
+
+@pytest.mark.django_db
+def test_change_status_action_applies_with_a_stringy_status_id(auth_client, board, statuses, project, user):
+    make_rule(
+        project, user,
+        action_type=AutomationRule.ActionType.CHANGE_STATUS,
+        action_config={"status_id": str(statuses["done"].id)},
+    )
+    response = auth_client.post(
+        "/api/work-items/",
+        {"board": board.id, "item_type": "task", "title": "Item"},
+        content_type="application/json",
+    )
+    item = WorkItem.objects.get(id=response.json()["id"])
+    assert item.status_id == statuses["done"].id

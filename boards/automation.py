@@ -22,6 +22,22 @@ from .services import move_work_item, resolve_labels
 # shape elsewhere in this codebase.
 
 
+def _to_status_id(value):
+    """Coerce a possibly-stringy status id (e.g. a <select>'s .value in a
+    future vanilla-JS rule builder — `ui/` has no framework, so nothing
+    does this coercion for us) to int, so a status id compares/executes
+    consistently whether it arrived as a JSON int or a JSON string.
+    Returns None for anything that isn't a valid integer, so a malformed
+    value acts as "no filter"/"no-op" at match/apply time rather than
+    raising out of a create or move request — the validators below are
+    the ones responsible for turning a malformed value into a real
+    validation error at rule-save time."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def trigger_filter_error(trigger_type, trigger_filter, project):
     trigger_filter = trigger_filter or {}
     if trigger_type == AutomationRule.TriggerType.STATUS_CHANGED:
@@ -30,9 +46,19 @@ def trigger_filter_error(trigger_type, trigger_filter, project):
         if to_status is not None and to_category is not None:
             return "to_status and to_category can't both be set."
         for key in ("from_status", "to_status"):
-            value = trigger_filter.get(key)
-            if value is not None and not WorkItemStatus.objects.filter(id=value, project_id=project.id).exists():
+            raw = trigger_filter.get(key)
+            if raw is None:
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
                 return f"{key} must be a status in this project."
+            if not WorkItemStatus.objects.filter(id=value, project_id=project.id).exists():
+                return f"{key} must be a status in this project."
+            # Normalize in place so a caller that saves this same dict
+            # (Task 3's AutomationRuleViewSet) persists an int, not the
+            # stringy value it may have received from the client.
+            trigger_filter[key] = value
     return None
 
 
@@ -47,9 +73,15 @@ def action_config_error(action_type, action_config, project):
         if not (action_config.get("label_name") or "").strip():
             return "label_name can't be blank."
     elif action_type == AutomationRule.ActionType.CHANGE_STATUS:
-        status_id = action_config.get("status_id")
+        raw = action_config.get("status_id")
+        try:
+            status_id = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return "status_id must be a status in this project."
         if not status_id or not WorkItemStatus.objects.filter(id=status_id, project_id=project.id).exists():
             return "status_id must be a status in this project."
+        # Same in-place normalization as trigger_filter_error above.
+        action_config["status_id"] = status_id
     return None
 
 
@@ -63,10 +95,10 @@ def _matches_work_item_created(trigger_filter, item):
 
 def _matches_status_changed(trigger_filter, from_status_id, to_status):
     trigger_filter = trigger_filter or {}
-    from_status = trigger_filter.get("from_status")
+    from_status = _to_status_id(trigger_filter.get("from_status"))
     if from_status is not None and from_status != from_status_id:
         return False
-    to_status_filter = trigger_filter.get("to_status")
+    to_status_filter = _to_status_id(trigger_filter.get("to_status"))
     if to_status_filter is not None:
         return to_status_filter == to_status.id
     to_category = trigger_filter.get("to_category")
@@ -98,11 +130,12 @@ def _apply_action(rule, item, actor):
         if label:
             item.labels.remove(label)
     elif rule.action_type == AutomationRule.ActionType.CHANGE_STATUS:
-        status_id = cfg.get("status_id")
-        # Appends to the end of the destination column, same "count as
-        # position" shape bulk_move already uses for the same purpose.
-        position = WorkItem.objects.filter(status_id=status_id).count()
-        move_work_item(item, status_id, position)
+        status_id = _to_status_id(cfg.get("status_id"))
+        if status_id is not None:
+            # Appends to the end of the destination column, same "count as
+            # position" shape bulk_move already uses for the same purpose.
+            position = WorkItem.objects.filter(status_id=status_id).count()
+            move_work_item(item, status_id, position)
 
 
 # ---- evaluation entry points --------------------------------------------

@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from accounts.serializers import UserSerializer
@@ -400,14 +401,15 @@ class WorkItemSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         custom_fields = validated_data.pop("custom_fields", None)
         label_names = validated_data.pop("labels", None)
-        instance = super().create(validated_data)
-        if custom_fields:
-            apply_custom_fields(instance, custom_fields)
-        if label_names is not None:
-            instance.labels.set(resolve_labels(label_names, self.context["request"].user))
-        from .automation import evaluate_work_item_created
+        with transaction.atomic():
+            instance = super().create(validated_data)
+            if custom_fields:
+                apply_custom_fields(instance, custom_fields)
+            if label_names is not None:
+                instance.labels.set(resolve_labels(label_names, self.context["request"].user))
+            from .automation import evaluate_work_item_created
 
-        evaluate_work_item_created(instance, self.context["request"].user)
+            evaluate_work_item_created(instance, self.context["request"].user)
         return instance
 
     def update(self, instance, validated_data):
