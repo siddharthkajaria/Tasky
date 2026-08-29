@@ -180,8 +180,9 @@ async function viewProjects() {
     errorEl.hidden = true;
     const name = e.target.querySelector('[name=name]').value;
     const key = e.target.querySelector('[name=key]').value;
+    const template = e.target.querySelector('[name=template]').value;
     try {
-      const project = await Store.createProject({ name, key });
+      const project = await Store.createProject({ name, key, template });
       toast('Project created');
       location.hash = `#/projects/${project.id}`;
     } catch (err) {
@@ -189,6 +190,28 @@ async function viewProjects() {
       errorEl.hidden = false;
     }
   });
+
+  const templateSelect = main.querySelector('[data-template-select]');
+  const templatePreview = main.querySelector('[data-template-preview]');
+  function paintTemplatePreview(templates) {
+    const chosen = templates.find(t => t.key === templateSelect.value) || templates[0];
+    if (!chosen) { templatePreview.textContent = ''; return; }
+    const statusNames = chosen.statuses.map(s => s.name).join(', ');
+    const componentNote = chosen.components.length
+      ? `, and starter components: ${chosen.components.join(', ')}`
+      : ', no starter components';
+    templatePreview.textContent = `${chosen.description} Creates statuses: ${statusNames}${componentNote}.`;
+  }
+  const templatesLoad = Store.listProjectTemplates().then((templates) => {
+    templateSelect.replaceChildren(...templates.map(t => {
+      const opt = document.createElement('option');
+      opt.value = t.key;
+      opt.textContent = t.name;
+      return opt;
+    }));
+    paintTemplatePreview(templates);
+    templateSelect.addEventListener('change', () => paintTemplatePreview(templates));
+  }).catch(handle);
 
   // paintToken guards against the initial paint (below) resolving AFTER a
   // change event's own repaint, which would otherwise clobber it with the
@@ -212,6 +235,7 @@ async function viewProjects() {
   const initialToken = ++paintToken;
   await Promise.all([
     invitationsLoad,
+    templatesLoad,
     paintProjectList(list, includeArchived.checked, () => initialToken === paintToken),
   ]);
 }

@@ -67,8 +67,10 @@
     <form class="create-project" data-create-project novalidate>
       <input name="name" placeholder="Project name" aria-label="Project name" required>
       <input name="key" placeholder="KEY" aria-label="Project key" maxlength="10" class="key-input" required>
+      <select name="template" aria-label="Template" data-template-select></select>
       <button class="btn btn-primary" type="submit">Create project</button>
     </form>
+    <p class="page-sub" data-template-preview></p>
     <p class="form-error" data-create-error hidden></p>
 
     <label class="archived-toggle"><input type="checkbox" data-include-archived> Show archived</label>

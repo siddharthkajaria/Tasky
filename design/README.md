@@ -22,6 +22,7 @@ prototype of the whole product, not a one-off mockup.
 | 7 — Releases | `../docs/superpowers/specs/2026-08-24-tasky-releases-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
 | 8 — Task Detail UX | `../docs/superpowers/specs/2026-08-24-tasky-task-detail-ux-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
 | 9 — Permissions & Admin | `../docs/superpowers/specs/2026-08-24-tasky-permissions-admin-design.md` | Signed off, **shipped to production** (`accounts/views.py`, `projects/models.py`) |
+| 10 — Project Types & Setup | `../docs/superpowers/specs/2026-08-24-tasky-project-types-setup-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -364,3 +365,30 @@ All state is in memory — refreshing the page resets it to the seed above.
     open that project — there's no Archive project button. Archiving is
     Owner-only, one tier stricter than the Owner/Admin split every other
     per-project manage action here uses.
+
+## Sub-project 10 — Project Types & Setup
+
+64. **Sign in as `asha` and open Projects.** The "+ Create project" form
+    now has a **Template** dropdown — Blank, Software Project, Bug
+    Tracking — with a preview line beneath it that updates as you switch
+    templates, naming exactly which statuses and starter components that
+    template will create, before you commit to anything.
+65. **Create a project with the Software Project template.** Its Statuses
+    section starts with the 5-status Detailed preset (To Do, In Progress,
+    In Review, Blocked, Done) and its Components section already has
+    Frontend/Backend/Infrastructure — all real rows, indistinguishable
+    from ones typed in by hand. Nothing on the project itself records
+    which template was used; it's a one-time starting point, not a
+    lasting label.
+66. **Create a second project with Bug Tracking.** Same 5-status Detailed
+    preset, but zero starter components — matching that template's own
+    preview line from step 64.
+67. **Create a third project leaving Template on its default (Blank).**
+    Exactly the 3-status Simple preset (To Do, In Progress, Done) and no
+    components — byte-for-byte what project creation already produced
+    before this sub-project, so every project created before today's
+    walkthrough still looks the same.
+68. **Rename or reorder a status, or delete a component, on any of the
+    three projects you just created.** They behave exactly like a
+    hand-configured project from here on — the template only shaped the
+    starting point, nothing about it is special or protected afterward.

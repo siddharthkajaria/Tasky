@@ -9,6 +9,44 @@ const Store = (() => {
   let nextId = 100;
   const id = () => ++nextId;
 
+  // Project Types & Setup (sub-project 10) — a fixed, in-code registry, not
+  // user-editable rows, mirroring how LABEL_PALETTE below is also a
+  // constant, not a Store-mutable list. A template is a one-time,
+  // creation-time input: applying it seeds real Status/Component rows and
+  // leaves no trace of "which template" on the Project itself.
+  const STATUS_PRESETS = {
+    simple: [
+      { name: 'To Do', category: 'todo' },
+      { name: 'In Progress', category: 'in_progress' },
+      { name: 'Done', category: 'done' },
+    ],
+    detailed: [
+      { name: 'To Do', category: 'todo' },
+      { name: 'In Progress', category: 'in_progress' },
+      { name: 'In Review', category: 'in_progress' },
+      { name: 'Blocked', category: 'in_progress' },
+      { name: 'Done', category: 'done' },
+    ],
+  };
+
+  const PROJECT_TEMPLATES = {
+    blank: {
+      key: 'blank', name: 'Blank',
+      description: 'Three statuses, no components — today\'s default. Good for anything that doesn\'t fit a more specific template.',
+      status_preset: 'simple', components: [],
+    },
+    software: {
+      key: 'software', name: 'Software Project',
+      description: 'An engineering-shaped workflow with room for review and blockers, plus a starter set of components to tag work by.',
+      status_preset: 'detailed', components: ['Frontend', 'Backend', 'Infrastructure'],
+    },
+    bugs: {
+      key: 'bugs', name: 'Bug Tracking',
+      description: 'For triaging and tracking defects through to verification.',
+      status_preset: 'detailed', components: [],
+    },
+  };
+
   // The same people the real `seed_demo` command creates, plus `priya`
   // (sub-project 9): a Site Admin with zero project memberships, so the
   // "is_staff widens canManageDefinitions even with no Owner role" case is
@@ -370,14 +408,39 @@ const Store = (() => {
     return wait(decorateProject(project));
   }
 
-  function createProject({ name, key }) {
+  const listProjectTemplates = () => wait(
+    Object.values(PROJECT_TEMPLATES).map(t => ({
+      key: t.key,
+      name: t.name,
+      description: t.description,
+      statuses: STATUS_PRESETS[t.status_preset],
+      components: t.components,
+    }))
+  );
+
+  // `template` defaults to "blank", reproducing exactly what createProject
+  // did before this sub-project — every existing caller (this prototype's
+  // own seed data included) keeps working unchanged.
+  function createProject({ name, key, template }) {
     if (!name || !name.trim()) return fail(400, 'This field may not be blank.');
     const cleanKey = (key || '').trim().toUpperCase();
     if (!/^[A-Z]{2,10}$/.test(cleanKey)) return fail(400, 'Key must be 2–10 letters, e.g. TASKY.');
     if (projects.some(p => p.key === cleanKey)) return fail(400, `"${cleanKey}" is already taken.`);
+    const templateKey = template || 'blank';
+    const chosen = PROJECT_TEMPLATES[templateKey];
+    if (!chosen) return fail(400, `"${templateKey}" is not a valid template.`);
+
     const project = { id: id(), key: cleanKey, name: name.trim(), description: '' };
     projects.push(project);
     memberships.push({ id: id(), project: project.id, user: me.id, role: 'owner' });
+
+    STATUS_PRESETS[chosen.status_preset].forEach((s, i) => {
+      workItemStatuses.push({ id: id(), project: project.id, name: s.name, category: s.category, position: i });
+    });
+    chosen.components.forEach(name => {
+      components.push({ id: id(), project: project.id, name });
+    });
+
     return wait(decorateProject(project));
   }
 
@@ -2180,7 +2243,7 @@ const Store = (() => {
 
   return {
     login, logout, getMe,
-    listMyProjects, getProject, createProject, deleteProject,
+    listMyProjects, getProject, createProject, deleteProject, listProjectTemplates,
     listMembers, removeMember, leaveProject, changeRole, transferOwnership,
     listMyInvitations, listProjectInvitations, listInvitableUsers,
     inviteMember, acceptInvitation, declineInvitation,
