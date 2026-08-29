@@ -205,12 +205,20 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         if target_status.project_id != item.board.project_id:
             raise ValidationError({"status": "Status must belong to this item's project."})
 
+        old_status_id = item.status_id
         try:
-            move_work_item(
-                item,
-                target_status.id,
-                serializer.validated_data["position"],
-            )
+            with transaction.atomic():
+                move_work_item(
+                    item,
+                    target_status.id,
+                    serializer.validated_data["position"],
+                )
+                if old_status_id != target_status.id:
+                    from .automation import evaluate_status_changed
+
+                    evaluate_status_changed(
+                        item, item.board.project_id, old_status_id, target_status, request.user
+                    )
         except WorkItem.DoesNotExist:
             # The item was deleted by another request between this request's
             # (unlocked) get_object() and move_work_item()'s row lock.

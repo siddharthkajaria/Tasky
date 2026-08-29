@@ -405,6 +405,9 @@ class WorkItemSerializer(serializers.ModelSerializer):
             apply_custom_fields(instance, custom_fields)
         if label_names is not None:
             instance.labels.set(resolve_labels(label_names, self.context["request"].user))
+        from .automation import evaluate_work_item_created
+
+        evaluate_work_item_created(instance, self.context["request"].user)
         return instance
 
     def update(self, instance, validated_data):
