@@ -116,3 +116,18 @@ def test_patching_a_nonexistent_label_returns_404(auth_client, project):
 @pytest.mark.django_db
 def test_deleting_a_nonexistent_label_returns_404(auth_client, project):
     assert auth_client.delete("/api/labels/999999/").status_code == 404
+
+
+@pytest.mark.django_db
+def test_site_admin_with_no_project_memberships_can_rename_a_label(auth_client, user):
+    """No `project` fixture here on purpose — `user` has zero
+    ProjectMembership rows, proving is_staff alone satisfies the check."""
+    user.is_staff = True
+    user.save()
+    label = Label.objects.create(name="old-name", color="#A32218", created_by=None)
+    response = auth_client.patch(
+        f"/api/labels/{label.id}/", {"name": "new-name"}, content_type="application/json"
+    )
+    assert response.status_code == 200
+    label.refresh_from_db()
+    assert label.name == "new-name"

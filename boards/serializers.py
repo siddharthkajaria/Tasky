@@ -53,6 +53,8 @@ def can_manage_screen_assignments(role):
 def user_can_manage_definitions(user):
     from projects.models import ProjectMembership
 
+    if user.is_staff:
+        return True
     return ProjectMembership.objects.filter(user=user, role="owner").exists()
 
 
