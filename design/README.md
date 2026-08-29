@@ -21,6 +21,7 @@ prototype of the whole product, not a one-off mockup.
 | 6 — Backlog & Sprints | `../docs/superpowers/specs/2026-08-24-tasky-backlog-sprints-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/services.py`) |
 | 7 — Releases | `../docs/superpowers/specs/2026-08-24-tasky-releases-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
 | 8 — Task Detail UX | `../docs/superpowers/specs/2026-08-24-tasky-task-detail-ux-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
+| 9 — Permissions & Admin | `../docs/superpowers/specs/2026-08-24-tasky-permissions-admin-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -33,7 +34,7 @@ No server required — open `index.html` directly in a browser. There's no
 backend to reach, so unlike `../ui/`, absolute `/static/...` paths aren't
 needed.
 
-Sign in as `asha`, `kabir` or `lena` — any password works.
+Sign in as `asha`, `kabir`, `lena` or `priya` — any password works.
 
 ## Suggested walkthrough (as Asha)
 
@@ -318,3 +319,48 @@ All state is in memory — refreshing the page resets it to the seed above.
     Delete still shows: an Owner/Admin can remove anyone's attachment, a
     deliberately wider rule than Comments get elsewhere in this tool.
     Delete it — gone immediately, with a confirmation toast.
+
+## Sub-project 9 — Permissions & Admin
+
+55. **Sign in as `kabir`** (a Site Admin, alongside his ordinary Admin/Owner
+    project roles) and open **Admin** (top nav). All four seeded accounts
+    are listed — including `priya`, a Site Admin with **no project
+    memberships at all**, seeded specifically so the "is_staff widens
+    management rights even with zero Owner roles" rule is visible without
+    any setup. Notice kabir's own row has no Deactivate/Revoke-admin
+    buttons — the self-lockout guard hides them before you can even try.
+56. **Create an account** via the form — username, an initial password,
+    optional name — then sign out and sign back in as that new username to
+    confirm the account really works, no separate activation step.
+57. **Deactivate the account you just created** from kabir's Admin list —
+    it immediately shows an Inactive badge. Sign out and try logging in as
+    that account — rejected with the same generic "Incorrect username or
+    password" copy a wrong password gets, on purpose (a deactivated account
+    shouldn't reveal it once existed). **Reactivate it** and confirm login
+    works again.
+58. **Revoke `priya`'s Site Admin status** from kabir's row for her — since
+    kabir remains a Site Admin throughout, this is allowed (at least one
+    always remains). Notice her Site Admin badge disappears immediately.
+    **Grant it back** the same way.
+59. **Sign in as `priya`** and open **Labels** — she can rename, recolor and
+    delete labels despite owning zero projects, because Site Admin now
+    satisfies the same "manage global resources" check Owners already had;
+    nobody with an existing Owner role lost anything.
+60. **Sign in as `asha`** (a plain user, not `is_staff`) and open **Admin**
+    — a locked note, and nothing else: no partial user list, unlike
+    Fields/Screens/Labels which stay readable for non-managers. This
+    endpoint has no non-admin view at all.
+61. **Open Tasky Redesign** (Asha is its Owner) and click **Archive
+    project**. It's immediately tagged Archived on its own page. **Go back
+    to Projects** — Tasky Redesign has dropped out of the default list.
+    Tick **Show archived** — it reappears, still carrying its Archived
+    badge in the list.
+62. **Open the archived Tasky Redesign anyway** (from the "Show archived"
+    list) and open one of its boards — everything is exactly as editable
+    as before. Archiving is visibility-only here, not a write-block; full
+    enforcement is flagged as a real, separate follow-up in the spec.
+    **Unarchive it** from the project page to put it back.
+63. **Sign in as `lena`** (a plain Member of Tasky Redesign, not Owner) and
+    open that project — there's no Archive project button. Archiving is
+    Owner-only, one tier stricter than the Owner/Admin split every other
+    per-project manage action here uses.

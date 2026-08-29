@@ -583,6 +583,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .role-badge.role-owner  { color: var(--accent); border-color: var(--accent); background: var(--accent-w); }
 .role-badge.role-admin  { color: var(--ink); border-color: var(--rule-2); background: var(--sunk); }
 .role-badge.role-member { color: var(--ink-3); }
+/* Reused by the Admin users list (sub-project 9) for the Site Admin/
+   Inactive tags, and by the project page for its Archived badge — same
+   pill shape as the role tier badges above, different modifier colors. */
+.role-badge.is-staff    { color: var(--accent); border-color: var(--accent); background: var(--accent-w); }
+.role-badge.is-inactive { color: var(--danger); border-color: var(--danger); background: var(--danger-w); }
+
+.archived-toggle { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; font-size: 13px; color: var(--ink-2); }
 
 .invite-list, .member-list { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 7px; }
 

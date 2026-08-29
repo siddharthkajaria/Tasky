@@ -128,12 +128,32 @@ const Logic = (() => {
   const isMultiValue = (fieldType) => fieldType === 'multiselect';
 
   // Global CustomField/Screen management: Owner of ANY project, not
-  // necessarily the project in front of you. `roles` is every role this
-  // person holds, across every project they're a member of.
-  const canManageDefinitions = (roles) => (roles || []).includes('owner');
+  // necessarily the project in front of you, OR a Site Admin (sub-project
+  // 9 widens this rule, it doesn't narrow it — see that spec's Judgment
+  // calls). `roles` is every role this person holds, across every project
+  // they're a member of; `isStaff` is their `is_staff` flag.
+  const canManageDefinitions = (roles, isStaff) => !!isStaff || (roles || []).includes('owner');
 
   // Per-project screen assignment — same tier already used for Components.
   const canManageScreenAssignments = (role) => role === 'owner' || role === 'admin';
+
+  /* ---- Permissions & Admin (sub-project 9) ------------------------------
+     Site Admin reuses Django's built-in `is_staff` flag rather than a
+     purpose-built field — see the spec's Judgment calls. Managing user
+     accounts is Site-Admin-only, a genuinely different (stricter) gate
+     than every role-based check above: there is no non-admin view of this
+     screen at all, unlike Fields/Screens/Labels, which stay readable for
+     everyone and only lock their edit controls. */
+  const isSiteAdmin = (user) => !!(user && user.is_staff);
+
+  // Archiving a project is Owner-only — one tier stricter than the
+  // Owner/Admin split every other per-project manage-tier check uses.
+  const canManageProjectArchive = (role) => role === 'owner';
+
+  // Revoking someone else's Site Admin status is blocked once it would
+  // leave zero Site Admins. `otherStaffCount` is how many *other* is_staff
+  // users exist besides the one being revoked.
+  const canRevokeSiteAdmin = (otherStaffCount) => otherStaffCount > 0;
 
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
   function isIsoDate(value) {
@@ -232,5 +252,6 @@ const Logic = (() => {
     fieldHasOptions, isMultiValue,
     canManageDefinitions, canManageScreenAssignments,
     isIsoDate, isBlankValue, fieldValueError, screenValueErrors,
+    isSiteAdmin, canManageProjectArchive, canRevokeSiteAdmin,
   };
 })();

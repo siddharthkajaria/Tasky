@@ -28,7 +28,7 @@
       </label>
       <p class="form-error" data-error hidden></p>
       <button class="btn btn-primary" type="submit">Sign in</button>
-      <p class="login-hint">Try <code>asha</code>, <code>kabir</code> or <code>lena</code> — any password</p>
+      <p class="login-hint">Try <code>asha</code>, <code>kabir</code>, <code>lena</code> or <code>priya</code> — any password</p>
     </form>
   </div>
 </template>
@@ -42,6 +42,7 @@
       <a href="#/screens" data-nav="screens">Screens</a>
       <a href="#/labels" data-nav="labels">Labels</a>
       <a href="#/search" data-nav="search">Search</a>
+      <a href="#/admin" data-nav="admin">Admin</a>
     </nav>
     <div class="topbar-end">
       <span class="who" data-who></span>
@@ -70,6 +71,7 @@
     </form>
     <p class="form-error" data-create-error hidden></p>
 
+    <label class="archived-toggle"><input type="checkbox" data-include-archived> Show archived</label>
     <ul class="project-list" data-list></ul>
   </div>
 </template>
@@ -83,6 +85,7 @@
           <h1 data-project-name></h1>
           <span class="key-pill" data-project-key></span>
           <span class="role-badge" data-my-role></span>
+          <span class="role-badge is-inactive" data-archived-badge hidden>Archived</span>
         </div>
         <p class="page-sub" data-project-desc></p>
       </div>
@@ -272,6 +275,27 @@
     <p class="form-error" data-error hidden></p>
 
     <ul class="search-results" data-results></ul>
+  </div>
+</template>
+
+<template id="tpl-admin">
+  <div class="page page-narrow">
+    <div class="page-head">
+      <h1>Admin</h1>
+      <p class="page-sub">Site-wide user accounts. Site Admin only — unlike Fields, Screens or Labels, a non-admin gets nothing here, not even a read-only list.</p>
+    </div>
+    <p class="locked-note" data-locked hidden></p>
+
+    <form class="create-user" data-create-user novalidate hidden>
+      <input name="username" placeholder="Username" aria-label="Username" required>
+      <input name="password" type="password" placeholder="Initial password" aria-label="Initial password" required>
+      <input name="first_name" placeholder="First name (optional)" aria-label="First name">
+      <input name="last_name" placeholder="Last name (optional)" aria-label="Last name">
+      <button class="btn btn-primary" type="submit">Create account</button>
+    </form>
+    <p class="form-error" data-create-error hidden></p>
+
+    <ul class="admin-list" data-list></ul>
   </div>
 </template>
 

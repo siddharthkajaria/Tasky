@@ -9,11 +9,19 @@ const Store = (() => {
   let nextId = 100;
   const id = () => ++nextId;
 
-  // The same people the real `seed_demo` command creates.
+  // The same people the real `seed_demo` command creates, plus `priya`
+  // (sub-project 9): a Site Admin with zero project memberships, so the
+  // "is_staff widens canManageDefinitions even with no Owner role" case is
+  // visible from the seed alone. `kabir` is also made a Site Admin
+  // (alongside his existing Admin/Owner project roles) so there are two —
+  // enough to exercise the "revoke another admin's is_staff, as long as one
+  // remains" and "can't revoke the last one" cases without creating a
+  // third account mid-walkthrough.
   const users = [
-    { id: 1, username: 'asha',  display_name: 'Asha Rao' },
-    { id: 2, username: 'kabir', display_name: 'Kabir Menon' },
-    { id: 3, username: 'lena',  display_name: 'Lena Fischer' },
+    { id: 1, username: 'asha',  display_name: 'Asha Rao',    first_name: 'Asha',  last_name: 'Rao',     is_staff: false, is_active: true },
+    { id: 2, username: 'kabir', display_name: 'Kabir Menon',  first_name: 'Kabir', last_name: 'Menon',   is_staff: true,  is_active: true },
+    { id: 3, username: 'lena',  display_name: 'Lena Fischer', first_name: 'Lena',  last_name: 'Fischer', is_staff: false, is_active: true },
+    { id: 4, username: 'priya', display_name: 'Priya Iyer',   first_name: 'Priya', last_name: 'Iyer',    is_staff: true,  is_active: true },
   ];
   const userById = (uid) => users.find(u => u.id === Number(uid));
 
@@ -22,10 +30,10 @@ const Store = (() => {
   // Seeded so signing in as Asha alone walks through Owner, Admin and
   // Member views without switching accounts, plus one pending invitation.
   let projects = [
-    { id: 1, key: 'TASKY', name: 'Tasky Redesign',   description: 'The multi-project expansion itself' },
-    { id: 2, key: 'WEB',   name: 'Website Refresh',  description: '' },
-    { id: 3, key: 'CLNT',  name: 'Client Portal',    description: '' },
-    { id: 4, key: 'MKT',   name: 'Marketing Launch', description: '' },
+    { id: 1, key: 'TASKY', name: 'Tasky Redesign',   description: 'The multi-project expansion itself', is_archived: false, archived_at: null, archived_by: null },
+    { id: 2, key: 'WEB',   name: 'Website Refresh',  description: '', is_archived: false, archived_at: null, archived_by: null },
+    { id: 3, key: 'CLNT',  name: 'Client Portal',    description: '', is_archived: false, archived_at: null, archived_by: null },
+    { id: 4, key: 'MKT',   name: 'Marketing Launch', description: '', is_archived: false, archived_at: null, archived_by: null },
   ];
 
   let memberships = [
@@ -320,9 +328,11 @@ const Store = (() => {
 
   function login(username, password) {
     const user = users.find(u => u.username === username.trim().toLowerCase());
-    if (!user || !password) {
-      // Identical message for an unknown username and a wrong password —
-      // matches the real API's anti-enumeration behaviour.
+    // Same message for an unknown username, a wrong password, and a
+    // deactivated account (sub-project 9) — matches the real API's
+    // anti-enumeration behaviour; a deactivated account shouldn't reveal
+    // that it once existed either.
+    if (!user || !password || !user.is_active) {
       return fail(400, 'Incorrect username or password.');
     }
     me = user;
@@ -338,11 +348,19 @@ const Store = (() => {
     return Object.assign({}, project, {
       my_role: myRole(project.id),
       member_count: memberships.filter(m => m.project === project.id).length,
+      archived_by_detail: project.archived_by ? userById(project.archived_by) : null,
     });
   }
 
-  const listMyProjects = () => wait(
-    projects.filter(p => membershipFor(p.id, me.id)).map(decorateProject)
+  // `includeArchived` mirrors the real API's `?include_archived=true` —
+  // default excludes, same visibility-only scope as the spec (sub-project
+  // 9): an archived project just drops out of this list, nothing about it
+  // becomes read-only.
+  const listMyProjects = (includeArchived) => wait(
+    projects
+      .filter(p => membershipFor(p.id, me.id))
+      .filter(p => includeArchived || !p.is_archived)
+      .map(decorateProject)
   );
 
   function getProject(projectId) {
@@ -1571,7 +1589,7 @@ const Store = (() => {
      here has a matching row in the spec's error table. */
 
   const myRoles = () => memberships.filter(m => m.user === me.id).map(m => m.role);
-  const canManageDefinitions = () => Logic.canManageDefinitions(myRoles());
+  const canManageDefinitions = () => Logic.canManageDefinitions(myRoles(), me.is_staff);
 
   function requireDefinitionManager(noun) {
     if (!canManageDefinitions()) {
@@ -1641,6 +1659,7 @@ const Store = (() => {
   // it has fetched anything else.
   const getMyCapabilities = () => wait({
     can_manage_definitions: canManageDefinitions(),
+    is_site_admin: Logic.isSiteAdmin(me),
     owned_project_keys: memberships
       .filter(m => m.user === me.id && m.role === 'owner')
       .map(m => (projects.find(p => p.id === m.project) || {}).key)
@@ -2067,6 +2086,98 @@ const Store = (() => {
 
   const listUsers = () => wait(users);
 
+  /* ---- Admin: user accounts (sub-project 9) -------------------------------
+     Site Admin only, and unlike Fields/Screens/Labels there is no
+     non-admin view of this at all — every route here 403s for a plain
+     user, including the list. Deactivation (`is_active=false`), never
+     deletion — a hard delete would cascade through membership rows and
+     quietly strip someone out of every project's member list, which is a
+     bigger action than "this person can no longer log in." */
+
+  function requireSiteAdmin() {
+    if (!Logic.isSiteAdmin(me)) {
+      throw Object.assign(new Error('Only a Site Admin can manage user accounts.'), { status: 403 });
+    }
+  }
+
+  const listAllUsers = () => {
+    try { requireSiteAdmin(); } catch (err) { return Promise.reject(err); }
+    return wait(users.slice().sort((a, b) => a.username.localeCompare(b.username)));
+  };
+
+  function createUserAccount({ username, password, first_name, last_name }) {
+    try { requireSiteAdmin(); } catch (err) { return Promise.reject(err); }
+    const clean = (username || '').trim().toLowerCase();
+    if (!clean || !password) return fail(400, 'Username and password are both required.');
+    if (users.some(u => u.username === clean)) return fail(400, `"${clean}" is already taken.`);
+    const user = {
+      id: id(),
+      username: clean,
+      display_name: [first_name, last_name].filter(Boolean).join(' ').trim() || clean,
+      first_name: first_name || '',
+      last_name: last_name || '',
+      is_active: true,
+      is_staff: false,
+    };
+    users.push(user);
+    return wait(user);
+  }
+
+  // `patch` may include is_active, is_staff, first_name, last_name. The
+  // self-lockout guard blocks is_active/is_staff on your OWN row (name
+  // fields on your own row are fine); the last-Site-Admin guard blocks
+  // revoking is_staff on someone else's row if they're the only one left.
+  function updateUserAccount(userId, patch) {
+    try { requireSiteAdmin(); } catch (err) { return Promise.reject(err); }
+    const target = userById(userId);
+    if (!target) return fail(404, 'Not found.');
+    const touchesOwnAdminOrActive =
+      Number(userId) === me.id && ('is_active' in patch || 'is_staff' in patch);
+    if (touchesOwnAdminOrActive) {
+      return fail(400, "You can't change your own admin or active status.");
+    }
+    if ('is_staff' in patch && patch.is_staff === false && target.is_staff) {
+      const otherStaffCount = users.filter(u => u.is_staff && u.id !== target.id).length;
+      if (!Logic.canRevokeSiteAdmin(otherStaffCount)) {
+        return fail(400, 'At least one Site Admin must remain.');
+      }
+    }
+    Object.assign(target, patch);
+    return wait(target);
+  }
+
+  /* ---- Project archiving (sub-project 9) ----------------------------------
+     Visibility-only: an archived project drops out of the default "my
+     projects" list (see listMyProjects above) but stays exactly as
+     writable as before for its existing members — nothing here enforces
+     read-only. Owner-only, mirroring transferOwnership's shape. */
+
+  function archiveProject(projectId) {
+    if (!Logic.canManageProjectArchive(myRole(projectId))) {
+      return fail(403, 'Only the owner can archive a project.');
+    }
+    const project = projects.find(p => p.id === Number(projectId));
+    if (!project) return fail(404, 'Not found.');
+    if (project.is_archived) return fail(400, 'This project is already archived.');
+    project.is_archived = true;
+    project.archived_at = new Date().toISOString();
+    project.archived_by = me.id;
+    return wait(decorateProject(project));
+  }
+
+  function unarchiveProject(projectId) {
+    if (!Logic.canManageProjectArchive(myRole(projectId))) {
+      return fail(403, 'Only the owner can unarchive a project.');
+    }
+    const project = projects.find(p => p.id === Number(projectId));
+    if (!project) return fail(404, 'Not found.');
+    if (!project.is_archived) return fail(400, 'This project is not archived.');
+    project.is_archived = false;
+    project.archived_at = null;
+    project.archived_by = null;
+    return wait(decorateProject(project));
+  }
+
   return {
     login, logout, getMe,
     listMyProjects, getProject, createProject, deleteProject,
@@ -2086,6 +2197,8 @@ const Store = (() => {
     listLinks, createLink, deleteLink,
     listAttachments, uploadAttachment, deleteAttachment,
     listUsers,
+    listAllUsers, createUserAccount, updateUserAccount,
+    archiveProject, unarchiveProject,
     getMyCapabilities, listFieldTypes,
     listFields, getField, createField, renameField, changeFieldType, deleteField,
     addFieldOption, renameFieldOption, moveFieldOption, deleteFieldOption,

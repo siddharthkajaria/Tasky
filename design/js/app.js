@@ -149,6 +149,7 @@ function route() {
   if (hash === '/screens') { setActiveNav('screens'); return viewScreens(); }
   if (hash === '/labels')  { setActiveNav('labels');  return viewLabels(); }
   if (hash === '/search')  { setActiveNav('search');  return viewSearch(); }
+  if (hash === '/admin')   { setActiveNav('admin');   return viewAdmin(); }
 
   setActiveNav('projects');
   const backlogMatch = hash.match(/^\/projects\/(\d+)\/boards\/(\d+)\/backlog$/);
@@ -170,6 +171,7 @@ async function viewProjects() {
   const invSection = main.querySelector('[data-invitations]');
   const invList = main.querySelector('[data-invite-list]');
   const list = main.querySelector('[data-list]');
+  const includeArchived = main.querySelector('[data-include-archived]');
   list.innerHTML = skeletonList(3);
 
   main.querySelector('[data-create-project]').addEventListener('submit', async (e) => {
@@ -188,19 +190,41 @@ async function viewProjects() {
     }
   });
 
-  try {
-    const [invitations, projects] = await Promise.all([
-      Store.listMyInvitations(),
-      Store.listMyProjects(),
-    ]);
+  // paintToken guards against the initial paint (below) resolving AFTER a
+  // change event's own repaint, which would otherwise clobber it with the
+  // stale, initial includeArchived value — a real race, not just a test
+  // artifact, since both start from the same "first render" moment.
+  let paintToken = 0;
+  includeArchived.addEventListener('change', () => {
+    const token = ++paintToken;
+    paintProjectList(list, includeArchived.checked, () => token === paintToken);
+  });
 
+  const invitationsLoad = Store.listMyInvitations().then((invitations) => {
     if (invitations.length) {
       invSection.hidden = false;
       const rows = invitations.map(invitationRow);
       invList.replaceChildren(...rows);
       stagger(rows);
     }
+  }).catch(handle);
 
+  const initialToken = ++paintToken;
+  await Promise.all([
+    invitationsLoad,
+    paintProjectList(list, includeArchived.checked, () => initialToken === paintToken),
+  ]);
+}
+
+// `stillCurrent`, if given, is checked right before painting — an older
+// in-flight call (e.g. the page's own initial load) loses to a newer one
+// (e.g. the user toggling "Show archived" before that initial load
+// finished) instead of overwriting it after the fact.
+async function paintProjectList(list, includeArchived, stillCurrent) {
+  list.innerHTML = skeletonList(3);
+  try {
+    const projects = await Store.listMyProjects(includeArchived);
+    if (stillCurrent && !stillCurrent()) return;
     if (!projects.length) {
       list.innerHTML = '<li class="empty">No projects yet. Create one above, or wait for an invitation.</li>';
       return;
@@ -209,6 +233,7 @@ async function viewProjects() {
     list.replaceChildren(...rows);
     stagger(rows);
   } catch (err) {
+    if (stillCurrent && !stillCurrent()) return;
     list.innerHTML = '';
     handle(err);
   }
@@ -251,6 +276,7 @@ function projectRow(project) {
     `<span class="key-pill">${esc(project.key)}</span>` +
     `<span class="desc">${esc(project.description)}</span>` +
     `<span class="role-badge role-${project.my_role}">${Logic.ROLE_LABEL[project.my_role]}</span>` +
+    (project.is_archived ? `<span class="role-badge is-inactive">Archived</span>` : '') +
     `<span class="tally mono">${project.member_count} member${project.member_count === 1 ? '' : 's'}</span>`;
   li.appendChild(a);
   return li;
@@ -266,7 +292,10 @@ async function viewProject(projectId) {
   try {
     const [project, myProjects] = await Promise.all([
       Store.getProject(projectId),
-      Store.listMyProjects(),
+      // include_archived: true — this is a switcher for navigation, not the
+      // default listing, and the project being viewed right now might
+      // itself be archived (reached via the "Show archived" list).
+      Store.listMyProjects(true),
     ]);
 
     main.querySelector('[data-project-name]').textContent = project.name;
@@ -277,6 +306,7 @@ async function viewProject(projectId) {
     const roleBadge = main.querySelector('[data-my-role]');
     roleBadge.textContent = Logic.ROLE_LABEL[project.my_role];
     roleBadge.classList.add(`role-${project.my_role}`);
+    main.querySelector('[data-archived-badge]').hidden = !project.is_archived;
 
     const switcher = main.querySelector('[data-switcher]');
     switcher.replaceChildren(...myProjects.map(p => {
@@ -751,6 +781,23 @@ function renderProjectActions(main, project) {
     btn.className = 'btn';
     btn.textContent = 'Transfer ownership';
     btn.addEventListener('click', () => openTransferModal(project));
+    actions.appendChild(btn);
+  }
+  if (Logic.canManageProjectArchive(role)) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-quiet';
+    btn.textContent = project.is_archived ? 'Unarchive project' : 'Archive project';
+    btn.addEventListener('click', async () => {
+      try {
+        const updated = project.is_archived
+          ? await Store.unarchiveProject(project.id)
+          : await Store.archiveProject(project.id);
+        toast(project.is_archived ? 'Project unarchived' : 'Project archived');
+        project.is_archived = updated.is_archived;
+        main.querySelector('[data-archived-badge]').hidden = !project.is_archived;
+        renderProjectActions(main, project);
+      } catch (err) { handle(err); }
+    });
     actions.appendChild(btn);
   }
   if (Logic.canLeave(role)) {
@@ -2823,6 +2870,118 @@ async function openLinkModal(item, parentModal) {
       errorEl.hidden = false;
     }
   });
+}
+
+/* Admin: user accounts (sub-project 9) -------------------------------------
+   Site Admin only, and unlike Fields/Screens/Labels there's genuinely
+   nothing to show a non-admin here — the list itself 403s, so this view
+   never even attempts to fetch it for a plain user. */
+
+async function viewAdmin() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-admin'));
+
+  const list = main.querySelector('[data-list]');
+  const locked = main.querySelector('[data-locked]');
+  const createForm = main.querySelector('[data-create-user]');
+  list.innerHTML = skeletonList(3);
+
+  let caps;
+  try { caps = await Store.getMyCapabilities(); }
+  catch (err) { list.innerHTML = ''; return handle(err); }
+
+  if (!caps.is_site_admin) {
+    locked.hidden = false;
+    locked.textContent = "Only a Site Admin can manage user accounts. You're not a Site Admin.";
+    list.innerHTML = '';
+    return;
+  }
+
+  createForm.hidden = false;
+  createForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errorEl = main.querySelector('[data-create-error]');
+    errorEl.hidden = true;
+    const form = e.target;
+    try {
+      await Store.createUserAccount({
+        username: form.username.value,
+        password: form.password.value,
+        first_name: form.first_name.value,
+        last_name: form.last_name.value,
+      });
+      toast('Account created');
+      form.reset();
+      await paintUsers(list);
+    } catch (err) {
+      errorEl.textContent = errorText(err);
+      errorEl.hidden = false;
+    }
+  });
+
+  await paintUsers(list);
+}
+
+async function paintUsers(list) {
+  list.innerHTML = skeletonList(3);
+  try {
+    const users = await Store.listAllUsers();
+    const rows = users.map(u => userRow(u, list));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    list.innerHTML = '';
+    handle(err);
+  }
+}
+
+function userRow(user, list) {
+  const li = document.createElement('li');
+  li.className = 'admin-row';
+  const isMe = me && user.id === me.id;
+
+  const badges =
+    `<span class="role-badge is-staff" ${user.is_staff ? '' : 'hidden'}>Site Admin</span>` +
+    `<span class="role-badge is-inactive" ${user.is_active ? 'hidden' : ''}>Inactive</span>`;
+
+  let controls = '';
+  // Self-lockout guard, enforced here too (not just in Store) so the
+  // buttons that would always be rejected never appear on your own row.
+  if (!isMe) {
+    controls +=
+      `<button class="btn" data-toggle-active>${user.is_active ? 'Deactivate' : 'Activate'}</button>` +
+      `<button class="btn" data-toggle-staff>${user.is_staff ? 'Revoke admin' : 'Make admin'}</button>`;
+  }
+
+  li.innerHTML =
+    `<span class="name">${esc(user.display_name)}${isMe ? ' (you)' : ''}</span>` +
+    badges +
+    `<span class="row-meta">@${esc(user.username)}</span>` +
+    `<span class="actions">${controls}</span>`;
+
+  const activeBtn = li.querySelector('[data-toggle-active]');
+  if (activeBtn) {
+    activeBtn.addEventListener('click', async () => {
+      try {
+        await Store.updateUserAccount(user.id, { is_active: !user.is_active });
+        toast(user.is_active ? `${user.username} deactivated` : `${user.username} activated`);
+        await paintUsers(list);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  const staffBtn = li.querySelector('[data-toggle-staff]');
+  if (staffBtn) {
+    staffBtn.addEventListener('click', async () => {
+      try {
+        await Store.updateUserAccount(user.id, { is_staff: !user.is_staff });
+        toast(user.is_staff ? `${user.username} is no longer a Site Admin` : `${user.username} is now a Site Admin`);
+        await paintUsers(list);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  return li;
 }
 
 boot();
