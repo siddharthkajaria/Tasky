@@ -76,7 +76,7 @@ joins a project by any route other than accepting a pending invitation.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/projects/` | projects I'm a member of |
+| GET | `/api/projects/` | projects I'm a member of; excludes archived unless `?include_archived=true` |
 | POST | `/api/projects/` | `{key, name, description?}`; `key` is 2–10 letters, case-insensitive on input but stored uppercase, unique across the system; creator becomes Owner |
 | GET | `/api/projects/{id}/` | 403 if I'm not a member (not 404 — see below), 404 if the id doesn't exist at all |
 | DELETE | `/api/projects/{id}/` | Owner only; cascades to the project's boards, work items, comments, memberships and invitations |
@@ -84,6 +84,8 @@ joins a project by any route other than accepting a pending invitation.
 | DELETE | `/api/projects/{id}/members/{user_id}/` | removes a member; also doubles as "leave" when `user_id` is your own — Owner can remove anyone but themself (and cannot leave without transferring ownership first, 400 if they try), Admin can remove Members only (but can leave freely), Member can only leave |
 | POST | `/api/projects/{id}/members/{user_id}/role/` | `{role: "admin"\|"member"}`; Owner only; the Owner's own role can't be changed here |
 | POST | `/api/projects/{id}/transfer-ownership/` | `{user_id}`; Owner only; target must already be an Admin; the caller becomes an Admin |
+| POST | `/api/projects/{id}/archive/` | Owner only; `400` if already archived |
+| POST | `/api/projects/{id}/unarchive/` | Owner only; `400` if not currently archived |
 | POST | `/api/projects/{id}/invite/` | `{user_id}`; Owner or Admin; 400 if already a member or already invited |
 
 **A non-member touching a project (or its boards/work items) gets `403`, not `404`.** A
@@ -94,6 +96,11 @@ all times; the Owner cannot leave a project without transferring ownership to an
 existing Admin first (there is no "leave" endpoint of its own — the client models
 "leave" as removing your own membership, subject to the same owner restriction as any
 other removal).
+
+**Archiving is visibility-only.** An archived project drops out of the default `GET
+/api/projects/` list but stays exactly as writable as before for its existing members — no
+other endpoint treats an archived project's boards, work items, or anything else as read-only.
+`Project.delete()` (hard delete, cascading, irreversible) is unrelated and untouched.
 
 ## Work Items
 | Method | Path | Notes |

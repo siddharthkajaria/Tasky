@@ -13,11 +13,15 @@ KEY_PATTERN = re.compile(r"^[A-Z]{2,10}$")
 class ProjectSerializer(serializers.ModelSerializer):
     my_role = serializers.SerializerMethodField()
     member_count = serializers.SerializerMethodField()
+    archived_by_detail = UserSerializer(source="archived_by", read_only=True)
 
     class Meta:
         model = Project
-        fields = ["id", "key", "name", "description", "my_role", "member_count", "created_at"]
-        read_only_fields = ["created_at"]
+        fields = [
+            "id", "key", "name", "description", "my_role", "member_count", "created_at",
+            "is_archived", "archived_at", "archived_by_detail",
+        ]
+        read_only_fields = ["created_at", "is_archived", "archived_at"]
 
     def get_my_role(self, obj):
         membership = obj.memberships.filter(user=self.context["request"].user).first()

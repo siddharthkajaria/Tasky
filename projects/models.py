@@ -8,6 +8,18 @@ class Project(models.Model):
     description = models.TextField(blank=True)
     next_item_number = models.IntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    # SET_NULL, matching Invitation.invited_by's existing pattern — knowing
+    # who archived a project is nice-to-have, not load-bearing, so a
+    # deleted admin account shouldn't block anything.
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="projects_archived",
+    )
 
     class Meta:
         ordering = ["name"]

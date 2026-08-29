@@ -14,6 +14,7 @@ from .permissions import (
     can_delete_project,
     can_invite,
     can_leave,
+    can_manage_archive,
     can_remove,
     can_transfer_ownership,
 )
@@ -44,6 +45,8 @@ class ProjectViewSet(
         qs = Project.objects.all()
         if self.action == "list":
             qs = qs.filter(memberships__user=self.request.user).distinct()
+            if self.request.query_params.get("include_archived") != "true":
+                qs = qs.filter(is_archived=False)
         return qs
 
     def perform_create(self, serializer):
@@ -141,6 +144,36 @@ class ProjectViewSet(
             target.role = ProjectMembership.Role.OWNER
             target.save()
         return Response(status=204)
+
+    @action(detail=True, methods=["post"], url_path="archive")
+    def archive(self, request, pk=None):
+        project = self.get_object()
+        acting = project.memberships.get(user=request.user)
+        if not can_manage_archive(acting.role):
+            raise PermissionDenied("Only the owner can archive a project.")
+        if project.is_archived:
+            raise ValidationError({"detail": "This project is already archived."})
+
+        project.is_archived = True
+        project.archived_at = timezone.now()
+        project.archived_by = request.user
+        project.save()
+        return Response(ProjectSerializer(project, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="unarchive")
+    def unarchive(self, request, pk=None):
+        project = self.get_object()
+        acting = project.memberships.get(user=request.user)
+        if not can_manage_archive(acting.role):
+            raise PermissionDenied("Only the owner can unarchive a project.")
+        if not project.is_archived:
+            raise ValidationError({"detail": "This project is not archived."})
+
+        project.is_archived = False
+        project.archived_at = None
+        project.archived_by = None
+        project.save()
+        return Response(ProjectSerializer(project, context={"request": request}).data)
 
     @action(detail=True, methods=["post"], url_path="invite")
     def invite(self, request, pk=None):

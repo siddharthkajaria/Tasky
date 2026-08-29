@@ -37,6 +37,10 @@ def can_leave(acting_role):
     return acting_role in (ADMIN, MEMBER)
 
 
+def can_manage_archive(acting_role):
+    return acting_role == OWNER
+
+
 class IsProjectMember(BasePermission):
     """Object-level only — it only ever sees objects the queryset already
     found, so a genuinely missing id 404s before this runs. This is what
