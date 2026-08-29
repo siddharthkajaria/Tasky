@@ -66,9 +66,11 @@ def action_config_error(action_type, action_config, project):
     action_config = action_config or {}
     if action_type == AutomationRule.ActionType.SET_ASSIGNEE:
         if action_config.get("mode") == "fixed":
-            user_id = action_config.get("user_id")
+            user_id = _to_status_id(action_config.get("user_id"))
             if not user_id or not project.memberships.filter(user_id=user_id).exists():
                 return 'user_id must be a member of this project when mode is "fixed".'
+            # Same in-place normalization as trigger_filter_error/status_id above.
+            action_config["user_id"] = user_id
     elif action_type in (AutomationRule.ActionType.APPLY_LABEL, AutomationRule.ActionType.REMOVE_LABEL):
         if not (action_config.get("label_name") or "").strip():
             return "label_name can't be blank."
@@ -115,7 +117,7 @@ def _apply_action(rule, item, actor):
     if rule.action_type == AutomationRule.ActionType.SET_ASSIGNEE:
         mode = cfg.get("mode")
         if mode == "fixed":
-            item.assignee_id = cfg.get("user_id")
+            item.assignee_id = _to_status_id(cfg.get("user_id"))
         elif mode == "actor":
             item.assignee = actor
         else:

@@ -294,6 +294,25 @@ def test_action_config_error_rejects_a_non_numeric_status_id(project, statuses):
 
 
 @pytest.mark.django_db
+def test_action_config_error_coerces_a_stringy_user_id_and_normalizes_it(project, user):
+    """Same coercion bug class as status_id: a vanilla-JS <select>.value
+    arrives as a string, and action_config_error must normalize it to int
+    in place so a later DRF response never emits a stringy assignee id."""
+    action_config = {"mode": "fixed", "user_id": str(user.id)}
+    assert action_config_error(AutomationRule.ActionType.SET_ASSIGNEE, action_config, project) is None
+    assert action_config["user_id"] == user.id
+    assert isinstance(action_config["user_id"], int)
+
+
+@pytest.mark.django_db
+def test_action_config_error_rejects_a_non_numeric_user_id(project):
+    error = action_config_error(
+        AutomationRule.ActionType.SET_ASSIGNEE, {"mode": "fixed", "user_id": "not-a-number"}, project
+    )
+    assert error is not None
+
+
+@pytest.mark.django_db
 def test_status_changed_trigger_matches_a_stringy_to_status_stored_in_the_db(auth_client, board, statuses, project, user):
     """A rule created directly against the model (bypassing the not-yet-
     built AutomationRuleViewSet's validation) with a JSON string to_status
@@ -330,3 +349,27 @@ def test_change_status_action_applies_with_a_stringy_status_id(auth_client, boar
     )
     item = WorkItem.objects.get(id=response.json()["id"])
     assert item.status_id == statuses["done"].id
+
+
+@pytest.mark.django_db
+def test_set_assignee_action_applies_with_a_stringy_user_id(auth_client, board, project, user, other_user):
+    """A rule created directly against the model (bypassing the
+    AutomationRuleViewSet's validation) with a JSON string user_id must
+    still assign correctly at runtime, and the resulting assignee_id must
+    be a genuine int — not the string that was stored — matching the
+    status_id coercion already proven above for CHANGE_STATUS."""
+    ProjectMembership.objects.create(project=project, user=other_user, role="member")
+    make_rule(
+        project, user,
+        action_type=AutomationRule.ActionType.SET_ASSIGNEE,
+        action_config={"mode": "fixed", "user_id": str(other_user.id)},
+    )
+    response = auth_client.post(
+        "/api/work-items/",
+        {"board": board.id, "item_type": "task", "title": "Item"},
+        content_type="application/json",
+    )
+    item = WorkItem.objects.get(id=response.json()["id"])
+    assert item.assignee_id == other_user.id
+    assert isinstance(item.assignee_id, int)
+    assert isinstance(response.json()["assignee"], int)
