@@ -201,6 +201,24 @@ const Store = (() => {
   const lblNeedsDesign = seedLabel('needs-design');
   const lblUrgent = seedLabel('urgent');
 
+  // Automation (sub-project 11) — two rules on Tasky Redesign, one per
+  // trigger type, so both are visible from the seed alone without any
+  // setup during the walkthrough.
+  let automationRules = [
+    {
+      id: id(), project: 1, name: 'Auto-triage new bugs',
+      trigger_type: 'work_item_created', trigger_filter: { item_type: 'bug' },
+      action_type: 'apply_label', action_config: { label_name: lblNeedsDesign.name },
+      position: 0, is_active: true, created_by: 1,
+    },
+    {
+      id: id(), project: 1, name: 'Clear assignee on Done',
+      trigger_type: 'status_changed', trigger_filter: { from_status: null, to_status: null, to_category: 'done' },
+      action_type: 'set_assignee', action_config: { mode: 'unassign' },
+      position: 1, is_active: true, created_by: 1,
+    },
+  ];
+
   const story1 = seedItem({
     id: id(), key: 'TASKY-2', board: board1.id, item_type: 'story', parent: epic.id,
     title: 'Design the welcome screen', status: taskyStatuses.todo.id, assignee: 3,
@@ -714,6 +732,7 @@ const Store = (() => {
     const siblings = workItems.filter(w => w.board === board.id && w.status === item.status && w.id !== item.id);
     item.position = siblings.length;
     if (fields.custom_fields) applyCustomFields(item.id, fields.custom_fields);
+    evaluateWorkItemCreatedTrigger(item, board.project);
     return wait(decorateWorkItem(item));
   }
 
@@ -771,6 +790,8 @@ const Store = (() => {
       }
     }
 
+    const oldStatusId = item.status;
+
     if ('title' in fields) item.title = fields.title.trim();
     ['description', 'priority', 'due_date', 'assignee', 'component_ids'].forEach(f => {
       if (f in fields) item[f] = fields[f];
@@ -780,6 +801,15 @@ const Store = (() => {
     if (newParent !== undefined) item.parent = newParent ? newParent.id : null;
     if (newRelease !== undefined) item.release = newRelease ? newRelease.id : null;
     if ('custom_fields' in fields) applyCustomFields(item.id, fields.custom_fields);
+
+    // This detail-modal Status dropdown is the prototype's stand-in for
+    // the real API's dedicated /move/ endpoint (see CLAUDE.md — status
+    // can't be PATCHed there, only moved) — so this is the one place a
+    // status_changed trigger fires, mirroring move_work_item() being the
+    // real backend's single chokepoint for it.
+    if (newStatus && newStatus.id !== oldStatusId) {
+      evaluateStatusChangedTrigger(item, boardProjectId(item.board), oldStatusId, newStatus);
+    }
 
     return wait(decorateWorkItem(item));
   }
@@ -794,6 +824,106 @@ const Store = (() => {
     links = links.filter(l => l.item_a !== item.id && l.item_b !== item.id);
     workItemFieldValues = workItemFieldValues.filter(v => v.work_item !== item.id);
     attachments = attachments.filter(a => a.work_item !== item.id);
+    return wait(null);
+  }
+
+  /* ---- Automation (sub-project 11) ----------------------------------------
+     Two triggers (work item created, status changed), reached from exactly
+     the two call sites below — createWorkItem and updateWorkItem's status
+     branch — mirroring the real API's two chokepoints
+     (WorkItemSerializer.create() / move_work_item()). Bulk operations
+     deliberately do NOT fire automation: bulkMoveWorkItems bypasses this
+     same as the real bulk-move endpoint bypasses move_work_item(), per the
+     spec's own scoping to "exactly one service function" per trigger.
+
+     Non-cascading, deliberately: applyAutomationAction below writes
+     directly to the work item (or calls findOrCreateLabel, the same
+     internals a manual edit already uses) but never calls either
+     evaluate*Trigger function itself — an automation-caused change can
+     never re-trigger rule evaluation, full stop. */
+
+  function applyAutomationAction(rule, item) {
+    const cfg = rule.action_config || {};
+    if (rule.action_type === 'set_assignee') {
+      if (cfg.mode === 'fixed') item.assignee = cfg.user_id;
+      else if (cfg.mode === 'actor') item.assignee = me.id;
+      else item.assignee = null;
+    } else if (rule.action_type === 'apply_label') {
+      const label = findOrCreateLabel(cfg.label_name);
+      if (label && !item.label_ids.includes(label.id)) item.label_ids = item.label_ids.concat(label.id);
+    } else if (rule.action_type === 'remove_label') {
+      const label = labels.find(l => l.name.toLowerCase() === String(cfg.label_name).trim().toLowerCase());
+      if (label) item.label_ids = item.label_ids.filter(lid => lid !== label.id);
+    } else if (rule.action_type === 'change_status') {
+      item.status = cfg.status_id;
+    }
+  }
+
+  function evaluateWorkItemCreatedTrigger(item, projectId) {
+    automationRules
+      .filter(r => r.project === projectId && r.is_active && r.trigger_type === 'work_item_created')
+      .sort((a, b) => a.position - b.position)
+      .filter(r => Logic.matchesWorkItemCreatedTrigger(r.trigger_filter, item))
+      .forEach(r => applyAutomationAction(r, item));
+  }
+
+  function evaluateStatusChangedTrigger(item, projectId, fromStatusId, toStatus) {
+    automationRules
+      .filter(r => r.project === projectId && r.is_active && r.trigger_type === 'status_changed')
+      .sort((a, b) => a.position - b.position)
+      .filter(r => Logic.matchesStatusChangedTrigger(r.trigger_filter, fromStatusId, toStatus))
+      .forEach(r => applyAutomationAction(r, item));
+  }
+
+  const listAutomationRules = (projectId) => wait(
+    automationRules.filter(r => r.project === Number(projectId)).sort((a, b) => a.position - b.position)
+  );
+
+  function requireAutomationManager(projectId) {
+    if (!Logic.canManageAutomation(myRole(projectId))) {
+      throw Object.assign(new Error("You don't have permission to manage this project's automation rules."), { status: 403 });
+    }
+  }
+
+  function createAutomationRule(projectId, fields) {
+    try { requireAutomationManager(projectId); } catch (err) { return Promise.reject(err); }
+    if (!fields.name || !fields.name.trim()) return fail(400, 'This field may not be blank.');
+    if (!Logic.AUTOMATION_TRIGGER_TYPES.includes(fields.trigger_type)) return fail(400, 'Invalid trigger type.');
+    if (!Logic.AUTOMATION_ACTION_TYPES.includes(fields.action_type)) return fail(400, 'Invalid action type.');
+
+    const triggerFilter = fields.trigger_filter || {};
+    if (triggerFilter.to_status != null && triggerFilter.to_category != null) {
+      return fail(400, 'to_status and to_category can\'t both be set.');
+    }
+
+    const position = automationRules.filter(r => r.project === Number(projectId)).length;
+    const rule = {
+      id: id(), project: Number(projectId), name: fields.name.trim(),
+      trigger_type: fields.trigger_type, trigger_filter: triggerFilter,
+      action_type: fields.action_type, action_config: fields.action_config || {},
+      position, is_active: fields.is_active !== false, created_by: me.id,
+    };
+    automationRules.push(rule);
+    return wait(rule);
+  }
+
+  function updateAutomationRule(ruleId, patch) {
+    const rule = automationRules.find(r => r.id === Number(ruleId));
+    if (!rule) return fail(404, 'Not found.');
+    try { requireAutomationManager(rule.project); } catch (err) { return Promise.reject(err); }
+    if ('is_active' in patch) rule.is_active = !!patch.is_active;
+    if ('name' in patch && patch.name.trim()) rule.name = patch.name.trim();
+    return wait(rule);
+  }
+
+  function deleteAutomationRule(ruleId) {
+    const rule = automationRules.find(r => r.id === Number(ruleId));
+    if (!rule) return fail(404, 'Not found.');
+    try { requireAutomationManager(rule.project); } catch (err) { return Promise.reject(err); }
+    const project = rule.project;
+    automationRules = automationRules.filter(r => r.id !== rule.id);
+    const siblings = automationRules.filter(r => r.project === project).sort((a, b) => a.position - b.position);
+    siblings.forEach((r, i) => { r.position = i; });
     return wait(null);
   }
 
@@ -1179,6 +1309,20 @@ const Store = (() => {
     const inUse = workItems.filter(w => w.status === status.id);
     if (inUse.length) {
       return fail(400, `"${status.name}" is still used by ${inUse.length} work item${inUse.length === 1 ? '' : 's'}. Move ${inUse.length === 1 ? 'it' : 'them'} first.`);
+    }
+    // Automation (sub-project 11): a rule can reference a status in its
+    // trigger_filter (from_status/to_status) or action_config (status_id)
+    // — deleting it out from under a rule would leave that rule silently
+    // broken, so this is checked the same way "still used by work items"
+    // already is, naming the rule(s) so the error is actionable.
+    const referencingRules = automationRules.filter(r =>
+      r.project === status.project && (
+        (r.trigger_filter && (r.trigger_filter.from_status === status.id || r.trigger_filter.to_status === status.id)) ||
+        (r.action_config && r.action_config.status_id === status.id)
+      )
+    );
+    if (referencingRules.length) {
+      return fail(400, `"${status.name}" is still referenced by ${referencingRules.length === 1 ? 'the automation rule' : 'automation rules'} ${referencingRules.map(r => `"${r.name}"`).join(', ')}.`);
     }
     const remaining = statusesFor(status.project).filter(s => s.category === status.category && s.id !== status.id);
     if (!remaining.length) {
@@ -2262,6 +2406,7 @@ const Store = (() => {
     listUsers,
     listAllUsers, createUserAccount, updateUserAccount,
     archiveProject, unarchiveProject,
+    listAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule,
     getMyCapabilities, listFieldTypes,
     listFields, getField, createField, renameField, changeFieldType, deleteField,
     addFieldOption, renameFieldOption, moveFieldOption, deleteFieldOption,

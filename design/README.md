@@ -23,6 +23,7 @@ prototype of the whole product, not a one-off mockup.
 | 8 — Task Detail UX | `../docs/superpowers/specs/2026-08-24-tasky-task-detail-ux-design.md` | Signed off, **shipped to production** (`boards/models.py`, `boards/views.py`) |
 | 9 — Permissions & Admin | `../docs/superpowers/specs/2026-08-24-tasky-permissions-admin-design.md` | Signed off, **shipped to production** (`accounts/views.py`, `projects/models.py`) |
 | 10 — Project Types & Setup | `../docs/superpowers/specs/2026-08-24-tasky-project-types-setup-design.md` | Signed off, **shipped to production** (`boards/services.py`, `projects/views.py`) |
+| 11 — Automation | `../docs/superpowers/specs/2026-08-24-tasky-automation-design.md` | Signed off — **prototype below, backend implementation next** |
 
 Because sub-projects 1, 2a, 2b, 3 and 4 already shipped, this whole prototype
 is now a faithful *replica* of what's live in production — it exists here as
@@ -392,3 +393,41 @@ All state is in memory — refreshing the page resets it to the seed above.
     three projects you just created.** They behave exactly like a
     hand-configured project from here on — the template only shaped the
     starting point, nothing about it is special or protected afterward.
+
+## Sub-project 11 — Automation
+
+69. **Open Tasky Redesign and find the new Automation section** (below
+    Releases). Two rules are seeded: **"Auto-triage new bugs"** ("When a
+    Bug is created, apply the 'needs-design' label") and **"Clear
+    assignee on Done"** ("When status moves from any status to the Done
+    category, clear the assignee") — both in plain English, so it's clear
+    why a card might change on its own without reading any JSON.
+70. **Open the Sprint Board and add a new work item of type Bug.** The
+    moment it's created, open it — the `needs-design` label is already
+    there, applied automatically by the first rule, the same way a manual
+    label-apply would land it.
+71. **Open `TASKY-2`** ("Design the welcome screen", currently assigned to
+    Lena) **and change its Status to Done.** Save, then reopen it — the
+    assignee is now blank. The second rule fired inline, in the same save
+    you just did.
+72. **Add a new rule of your own** via the form — pick a trigger, watch
+    the fields beneath it change shape (an item-type picker for "Work
+    item created", a from/to status picker for "Status changed"), pick an
+    action the same way, name it, and submit. It appears in the list
+    immediately, described in the same plain-English style as the seeded
+    two.
+73. **Deactivate the rule you just added** — its row gets an Inactive
+    badge, and it stops firing (try triggering it — nothing happens)
+    without losing its configuration. **Delete it** when you're done.
+74. **Add a rule whose action is "Change status" targeting "To Do", then
+    try to delete the To Do status** (in the Statuses section above) — the
+    delete only warns about work items in use today; the description now
+    also names the rule that's still referencing it, and the delete is
+    rejected until the rule itself is deleted or edited to reference a
+    different status.
+75. **Sign in as `lena`** (a plain Member of Tasky Redesign) and open the
+    Automation section — the rule list and its plain-English descriptions
+    are fully visible (so it's clear why cards change on their own), but
+    there's no create form and no Deactivate/Delete buttons on any row.
+    Managing automation is Owner/Admin only, same tier as Statuses and
+    Components.

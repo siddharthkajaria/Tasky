@@ -239,6 +239,83 @@ const Logic = (() => {
     return errors;
   }
 
+  /* ---- Automation (sub-project 11) ---------------------------------------
+     Governance reuses the existing Owner/Admin tier — same as Components/
+     Statuses/Sprints/Releases — no new permission level. Only two triggers
+     and four actions made this first pass; see the spec's Scope decisions
+     for why a generic "field changed" trigger and multi-action rules were
+     deliberately left out. */
+  const canManageAutomation = (role) => role === 'owner' || role === 'admin';
+
+  const AUTOMATION_TRIGGER_TYPES = ['work_item_created', 'status_changed'];
+  const AUTOMATION_TRIGGER_LABEL = {
+    work_item_created: 'Work item created',
+    status_changed: 'Status changed',
+  };
+  const AUTOMATION_ACTION_TYPES = ['set_assignee', 'apply_label', 'remove_label', 'change_status'];
+  const AUTOMATION_ACTION_LABEL = {
+    set_assignee: 'Set assignee',
+    apply_label: 'Apply label',
+    remove_label: 'Remove label',
+    change_status: 'Change status',
+  };
+
+  // `item_type: null` matches every item type — the filter's only key.
+  function matchesWorkItemCreatedTrigger(filter, item) {
+    const itemType = filter && filter.item_type;
+    return !itemType || item.item_type === itemType;
+  }
+
+  // `from_status: null` matches any originating status. `to_status` and
+  // `to_category` are mutually exclusive (enforced at write time, not
+  // here) — whichever is set narrows the destination; both null matches
+  // any destination. `toStatus` is the full status object being moved
+  // into (not just its id), since a `to_category` filter needs its
+  // category too.
+  function matchesStatusChangedTrigger(filter, fromStatusId, toStatus) {
+    filter = filter || {};
+    if (filter.from_status != null && Number(filter.from_status) !== Number(fromStatusId)) return false;
+    if (filter.to_status != null) return Number(filter.to_status) === Number(toStatus.id);
+    if (filter.to_category != null) return filter.to_category === toStatus.category;
+    return true;
+  }
+
+  // Plain-English summary of a rule's trigger/action, for the admin list —
+  // takes lookup functions rather than raw ids so this stays free of any
+  // dependency on Store's data shape.
+  function describeAutomationRule(rule, statusLookup) {
+    let triggerText;
+    if (rule.trigger_type === 'work_item_created') {
+      const itemType = rule.trigger_filter && rule.trigger_filter.item_type;
+      triggerText = itemType
+        ? `a ${ITEM_TYPE_LABEL[itemType] || itemType} is created`
+        : 'any work item is created';
+    } else {
+      const f = rule.trigger_filter || {};
+      const from = f.from_status != null ? `"${statusLookup(f.from_status)}"` : 'any status';
+      let to = 'any status';
+      if (f.to_status != null) to = `"${statusLookup(f.to_status)}"`;
+      else if (f.to_category != null) to = `the ${CATEGORY_LABELS[f.to_category] || f.to_category} category`;
+      triggerText = `status moves from ${from} to ${to}`;
+    }
+
+    let actionText;
+    const cfg = rule.action_config || {};
+    if (rule.action_type === 'set_assignee') {
+      if (cfg.mode === 'actor') actionText = 'assign whoever triggered it';
+      else if (cfg.mode === 'unassign') actionText = 'clear the assignee';
+      else actionText = `set the assignee`;
+    } else if (rule.action_type === 'apply_label') {
+      actionText = `apply the "${cfg.label_name}" label`;
+    } else if (rule.action_type === 'remove_label') {
+      actionText = `remove the "${cfg.label_name}" label`;
+    } else {
+      actionText = `change status to "${statusLookup(cfg.status_id)}"`;
+    }
+
+    return `When ${triggerText}, ${actionText}.`;
+  }
+
   return {
     ROLE_LABEL,
     canInvite, canRemove, canChangeRole,
@@ -253,5 +330,8 @@ const Logic = (() => {
     canManageDefinitions, canManageScreenAssignments,
     isIsoDate, isBlankValue, fieldValueError, screenValueErrors,
     isSiteAdmin, canManageProjectArchive, canRevokeSiteAdmin,
+    canManageAutomation, AUTOMATION_TRIGGER_TYPES, AUTOMATION_TRIGGER_LABEL,
+    AUTOMATION_ACTION_TYPES, AUTOMATION_ACTION_LABEL,
+    matchesWorkItemCreatedTrigger, matchesStatusChangedTrigger, describeAutomationRule,
   };
 })();

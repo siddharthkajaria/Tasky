@@ -145,6 +145,21 @@
     </section>
 
     <section>
+      <h2 class="section-label">Automation</h2>
+      <p class="page-sub" style="margin-bottom:10px">Rules that react to work item events — when X happens, do Y, no chaining. Owner and Admins manage the list; every member can see the list so it's clear why a card changed on its own.</p>
+      <ul class="admin-list" data-automation-rules></ul>
+      <form class="create-automation-rule" data-create-automation-rule novalidate hidden>
+        <input name="name" placeholder="Rule name" aria-label="Rule name" required>
+        <select name="trigger_type" aria-label="Trigger" data-trigger-select></select>
+        <span data-trigger-fields></span>
+        <select name="action_type" aria-label="Action" data-action-select></select>
+        <span data-action-fields></span>
+        <button class="btn btn-primary" type="submit">Add rule</button>
+      </form>
+      <p class="form-error" data-automation-error hidden></p>
+    </section>
+
+    <section>
       <h2 class="section-label">Members</h2>
       <ul class="member-list" data-members></ul>
     </section>

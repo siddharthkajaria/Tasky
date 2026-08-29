@@ -348,6 +348,7 @@ async function viewProject(projectId) {
     await renderStatuses(main, projectId, project.my_role);
     await renderScreenAssignments(main, projectId, project.my_role);
     await renderReleases(main, projectId, project.my_role);
+    await renderAutomation(main, projectId, project.my_role);
     await renderMembers(main, projectId, project.my_role);
     await renderPendingInvites(main, projectId, project.my_role);
   } catch (err) {
@@ -785,6 +786,201 @@ function releaseItemRow(item, projectId) {
     try { boardState.statuses = await Store.listStatuses(projectId); } catch (err) { /* modal shows what it can */ }
     openWorkItemModal(item.id);
   });
+  return li;
+}
+
+/* Automation (sub-project 11) ----------------------------------------------
+   trigger_filter/action_config shapes depend on which trigger_type/
+   action_type is selected, so the create form's sub-fields are repainted
+   on every change rather than being static markup — the same "form shape
+   follows a type select" idea as Custom Fields' type picker, just with
+   more than one dependent field here. */
+
+// Listeners on the create form (submit, trigger/action select change) are
+// attached exactly once, here — toggling or deleting a rule afterward
+// calls paintAutomationRules (below) to repaint only the <ul>, never this
+// function again, so the form never accumulates a second, third, ...
+// stacked submit listener the way calling this whole function again on
+// every action would.
+async function renderAutomation(main, projectId, myRole) {
+  const list = main.querySelector('[data-automation-rules]');
+  const form = main.querySelector('[data-create-automation-rule]');
+  if (!list || !form) return;
+  const canManage = Logic.canManageAutomation(myRole);
+  form.hidden = !canManage;
+
+  let statuses = [];
+  try { statuses = await Store.listStatuses(projectId); } catch (err) { /* form still usable without a preview */ }
+  let members = [];
+  try { members = (await Store.listMembers(projectId)).map(m => m.user_detail); } catch (err) { /* same */ }
+
+  if (canManage) {
+    const triggerSelect = form.querySelector('[data-trigger-select]');
+    const actionSelect = form.querySelector('[data-action-select]');
+    const triggerFields = form.querySelector('[data-trigger-fields]');
+    const actionFields = form.querySelector('[data-action-fields]');
+
+    triggerSelect.replaceChildren(...Logic.AUTOMATION_TRIGGER_TYPES.map(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = Logic.AUTOMATION_TRIGGER_LABEL[t];
+      return opt;
+    }));
+    actionSelect.replaceChildren(...Logic.AUTOMATION_ACTION_TYPES.map(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = Logic.AUTOMATION_ACTION_LABEL[t];
+      return opt;
+    }));
+    paintTriggerFields(triggerFields, triggerSelect.value, statuses);
+    paintActionFields(actionFields, actionSelect.value, statuses, members);
+    triggerSelect.addEventListener('change', () => paintTriggerFields(triggerFields, triggerSelect.value, statuses));
+    actionSelect.addEventListener('change', () => paintActionFields(actionFields, actionSelect.value, statuses, members));
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errorEl = main.querySelector('[data-automation-error]');
+      errorEl.hidden = true;
+      const nameInput = form.querySelector('[name=name]');
+      try {
+        await Store.createAutomationRule(projectId, {
+          name: nameInput.value,
+          trigger_type: triggerSelect.value,
+          trigger_filter: readTriggerFields(triggerFields, triggerSelect.value),
+          action_type: actionSelect.value,
+          action_config: readActionFields(actionFields, actionSelect.value),
+        });
+        nameInput.value = '';
+        toast('Rule added');
+        await paintAutomationRules(list, projectId, canManage, statuses, main, myRole);
+      } catch (err) {
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+      }
+    });
+  }
+
+  await paintAutomationRules(list, projectId, canManage, statuses, main, myRole);
+}
+
+async function paintAutomationRules(list, projectId, canManage, statuses, main, myRole) {
+  list.innerHTML = skeletonList(2);
+  try {
+    const rules = await Store.listAutomationRules(projectId);
+    if (!rules.length) {
+      list.innerHTML = '<li class="empty">No automation rules yet.</li>';
+      return;
+    }
+    const statusLookup = (statusId) => {
+      const s = statuses.find(s => s.id === Number(statusId));
+      return s ? s.name : '(deleted status)';
+    };
+    const rows = rules.map(rule => automationRuleRow(rule, statusLookup, canManage, list, projectId, statuses, main, myRole));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    list.innerHTML = '';
+    handle(err);
+  }
+}
+
+function paintTriggerFields(container, triggerType, statuses) {
+  if (triggerType === 'work_item_created') {
+    container.innerHTML =
+      `<select name="item_type" aria-label="Item type"><option value="">Any type</option>${
+        Logic.ITEM_TYPES.map(t => `<option value="${t}">${Logic.ITEM_TYPE_LABEL[t]}</option>`).join('')
+      }</select>`;
+    return;
+  }
+  const statusOptions = statuses.map(s => `<option value="status:${s.id}">${esc(s.name)}</option>`).join('');
+  const categoryOptions = Logic.CATEGORIES.map(c => `<option value="category:${c}">Any ${Logic.CATEGORY_LABELS[c]} status</option>`).join('');
+  container.innerHTML =
+    `<select name="from_status" aria-label="From status"><option value="">Any status</option>${
+      statuses.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')
+    }</select>` +
+    `<select name="to" aria-label="To"><option value="">Any status</option>${statusOptions}${categoryOptions}</select>`;
+}
+
+function paintActionFields(container, actionType, statuses, members) {
+  if (actionType === 'set_assignee') {
+    container.innerHTML =
+      `<select name="mode" aria-label="Assignee mode" data-mode>` +
+        `<option value="fixed">Fixed member</option>` +
+        `<option value="actor">Whoever triggered it</option>` +
+        `<option value="unassign">Unassign</option>` +
+      `</select>` +
+      `<select name="user_id" aria-label="Member">${
+        members.map(m => `<option value="${m.id}">${esc(m.display_name)}</option>`).join('')
+      }</select>`;
+    return;
+  }
+  if (actionType === 'apply_label' || actionType === 'remove_label') {
+    container.innerHTML = `<input name="label_name" placeholder="Label name" aria-label="Label name" required>`;
+    return;
+  }
+  container.innerHTML =
+    `<select name="status_id" aria-label="New status">${
+      statuses.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')
+    }</select>`;
+}
+
+function readTriggerFields(container, triggerType) {
+  if (triggerType === 'work_item_created') {
+    const itemType = container.querySelector('[name=item_type]').value;
+    return { item_type: itemType || null };
+  }
+  const fromStatus = container.querySelector('[name=from_status]').value;
+  const to = container.querySelector('[name=to]').value;
+  const filter = { from_status: fromStatus ? Number(fromStatus) : null, to_status: null, to_category: null };
+  if (to.startsWith('status:')) filter.to_status = Number(to.slice('status:'.length));
+  else if (to.startsWith('category:')) filter.to_category = to.slice('category:'.length);
+  return filter;
+}
+
+function readActionFields(container, actionType) {
+  if (actionType === 'set_assignee') {
+    const mode = container.querySelector('[name=mode]').value;
+    const userId = container.querySelector('[name=user_id]').value;
+    return { mode, user_id: mode === 'fixed' ? Number(userId) : null };
+  }
+  if (actionType === 'apply_label' || actionType === 'remove_label') {
+    return { label_name: container.querySelector('[name=label_name]').value };
+  }
+  return { status_id: Number(container.querySelector('[name=status_id]').value) };
+}
+
+function automationRuleRow(rule, statusLookup, canManage, list, projectId, statuses, main, myRole) {
+  const li = document.createElement('li');
+  li.className = 'admin-row';
+  li.innerHTML =
+    `<span class="name">${esc(rule.name)}</span>` +
+    (rule.is_active ? '' : `<span class="role-badge is-inactive">Inactive</span>`) +
+    `<span class="row-meta">${esc(Logic.describeAutomationRule(rule, statusLookup))}</span>` +
+    `<span class="actions">${canManage
+      ? `<button class="btn" data-toggle-active>${rule.is_active ? 'Deactivate' : 'Activate'}</button>` +
+        `<button class="btn btn-danger" data-delete>Delete</button>`
+      : ''}</span>`;
+
+  const toggleBtn = li.querySelector('[data-toggle-active]');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', async () => {
+      try {
+        await Store.updateAutomationRule(rule.id, { is_active: !rule.is_active });
+        toast(rule.is_active ? 'Rule deactivated' : 'Rule activated');
+        await paintAutomationRules(list, projectId, canManage, statuses, main, myRole);
+      } catch (err) { handle(err); }
+    });
+  }
+  const deleteBtn = li.querySelector('[data-delete]');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      try {
+        await Store.deleteAutomationRule(rule.id);
+        toast('Rule deleted');
+        await paintAutomationRules(list, projectId, canManage, statuses, main, myRole);
+      } catch (err) { handle(err); }
+    });
+  }
   return li;
 }
 
