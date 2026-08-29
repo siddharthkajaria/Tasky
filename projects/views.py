@@ -6,6 +6,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.generics import get_object_or_404
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .models import Invitation, Project, ProjectMembership
 from .permissions import (
@@ -50,19 +51,28 @@ class ProjectViewSet(
         return qs
 
     def perform_create(self, serializer):
+        from boards.models import Component
+        from boards.services import PROJECT_TEMPLATES, seed_default_statuses
+
+        template_key = self.request.data.get("template") or "blank"
+        template = PROJECT_TEMPLATES.get(template_key)
+        if template is None:
+            raise ValidationError({"template": f'"{template_key}" is not a valid template.'})
+
         # Per the Workflows design spec, a project's default statuses are
         # "created alongside the Project row itself, same transaction" —
-        # wrap the membership + status-seeding writes in one atomic block
-        # so that guarantee actually holds (a failure partway through never
-        # leaves a Project with an owner but no statuses, or vice versa).
+        # wrap the membership + status-seeding + starter-component writes
+        # in one atomic block so that guarantee actually holds (a failure
+        # partway through never leaves a Project with an owner but no
+        # statuses, or vice versa).
         with transaction.atomic():
             project = serializer.save()
             ProjectMembership.objects.create(
                 project=project, user=self.request.user, role=ProjectMembership.Role.OWNER
             )
-            from boards.services import seed_default_statuses
-
-            seed_default_statuses(project)
+            seed_default_statuses(project, preset_key=template["status_preset"])
+            for name in template["components"]:
+                Component.objects.create(project=project, name=name)
 
     def perform_destroy(self, instance):
         membership = instance.memberships.get(user=self.request.user)
@@ -241,3 +251,27 @@ class InvitationViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         invitation.responded_at = timezone.now()
         invitation.save()
         return Response(status=204)
+
+
+class ProjectTemplateListView(APIView):
+    """Read-only — the fixed, in-code PROJECT_TEMPLATES registry (sub-
+    project 10), never a resource collection: every method but GET 405s
+    automatically since none of them are defined here."""
+
+    def get(self, request):
+        from boards.services import PROJECT_TEMPLATES, STATUS_PRESETS
+
+        data = [
+            {
+                "key": key,
+                "name": template["name"],
+                "description": template["description"],
+                "statuses": [
+                    {"name": name, "category": category}
+                    for name, category in STATUS_PRESETS[template["status_preset"]]
+                ],
+                "components": template["components"],
+            }
+            for key, template in PROJECT_TEMPLATES.items()
+        ]
+        return Response(data)

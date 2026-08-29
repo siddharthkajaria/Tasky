@@ -77,7 +77,7 @@ joins a project by any route other than accepting a pending invitation.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/projects/` | projects I'm a member of; excludes archived unless `?include_archived=true` |
-| POST | `/api/projects/` | `{key, name, description?}`; `key` is 2–10 letters, case-insensitive on input but stored uppercase, unique across the system; creator becomes Owner |
+| POST | `/api/projects/` | `{key, name, description?, template?}`; `key` is 2–10 letters, case-insensitive on input but stored uppercase, unique across the system; creator becomes Owner; see Project Templates below for `template` |
 | GET | `/api/projects/{id}/` | 403 if I'm not a member (not 404 — see below), 404 if the id doesn't exist at all |
 | DELETE | `/api/projects/{id}/` | Owner only; cascades to the project's boards, work items, comments, memberships and invitations |
 | GET | `/api/projects/{id}/members/` | sorted Owner, then Admin, then Member |
@@ -101,6 +101,24 @@ other removal).
 /api/projects/` list but stays exactly as writable as before for its existing members — no
 other endpoint treats an archived project's boards, work items, or anything else as read-only.
 `Project.delete()` (hard delete, cascading, irreversible) is unrelated and untouched.
+
+## Project Templates
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/project-templates/` | the fixed list of built-in templates; `405` on any other method — read-only, not a resource collection |
+
+```json
+[
+  {"key": "blank", "name": "Blank", "description": "...", "statuses": [{"name": "To Do", "category": "todo"}, ...], "components": []}
+]
+```
+
+`POST /api/projects/` gains an optional `template` field: one of `"blank"`, `"software"`,
+`"bugs"`. Omitted (or explicitly `"blank"`) reproduces exactly the pre-existing 3-status,
+no-components default. An unrecognized value is rejected with `400`, naming `template`.
+Nothing on the created `Project` row records which template was used — a template pre-fills
+statuses and starter components once, at creation time, and leaves no lasting trace; the
+project is freely customizable afterward exactly like any other.
 
 ## Work Items
 | Method | Path | Notes |
