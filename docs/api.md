@@ -22,6 +22,31 @@ is the `csrftoken` cookie. Call `GET /api/auth/csrf/` once on app load to be han
 | POST | `/api/auth/logout/` | — | 204 |
 | GET | `/api/auth/me/` | — | the signed-in user |
 
+## Admin: user accounts
+Site Admin only (`User.is_staff`, reused rather than a new field) — unlike every other
+admin-ish screen in this app (Labels, Custom Fields, Screens), there is **no non-admin view
+of this at all**: a plain user gets `403` on every route here, including `GET` (list).
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/admin/users/` | every user, active and inactive |
+| POST | `/api/admin/users/` | `{username, password, first_name?, last_name?}`; `400` on a duplicate username or a missing username/password |
+| GET | `/api/admin/users/{id}/` | includes `is_active`, `is_staff`, `date_joined` |
+| PATCH | `/api/admin/users/{id}/` | `{is_active?, is_staff?, first_name?, last_name?}` — activate/deactivate, grant/revoke Site Admin |
+
+**No `DELETE`** — deactivation (`is_active=false`) is the only disable primitive; a hard delete
+would cascade through `ProjectMembership` and silently strip someone out of every project's
+member list.
+
+**Self-lockout**: `PATCH` on your own account rejects `is_active` or `is_staff` in the payload
+with `400`, regardless of value — `first_name`/`last_name` on your own row are unaffected.
+
+**Last-Site-Admin guard**: revoking someone else's `is_staff` is rejected with `400` if it would
+leave zero Site Admins.
+
+**Deactivating a project Owner does not touch their `ProjectMembership`** — the project's Owner
+of record is unchanged; only login is blocked.
+
 ## Boards
 | Method | Path | Notes |
 |---|---|---|
