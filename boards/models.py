@@ -421,3 +421,37 @@ class Attachment(models.Model):
     @property
     def project(self):
         return self.work_item.board.project
+
+
+class AutomationRule(models.Model):
+    class TriggerType(models.TextChoices):
+        WORK_ITEM_CREATED = "work_item_created", "Work item created"
+        STATUS_CHANGED = "status_changed", "Status changed"
+
+    class ActionType(models.TextChoices):
+        SET_ASSIGNEE = "set_assignee", "Set assignee"
+        APPLY_LABEL = "apply_label", "Apply label"
+        REMOVE_LABEL = "remove_label", "Remove label"
+        CHANGE_STATUS = "change_status", "Change status"
+
+    project = models.ForeignKey("projects.Project", on_delete=models.CASCADE, related_name="automation_rules")
+    name = models.CharField(max_length=120)
+    trigger_type = models.CharField(max_length=30, choices=TriggerType.choices)
+    trigger_filter = models.JSONField(default=dict, blank=True)
+    action_type = models.CharField(max_length=30, choices=ActionType.choices)
+    action_config = models.JSONField(default=dict, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="automation_rules_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.project})"
