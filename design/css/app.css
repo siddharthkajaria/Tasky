@@ -1,28 +1,30 @@
 /* Tasky — design prototype
-   Thesis: colour is attention. Only in-progress work is saturated;
-   To Do stays neutral and Done recedes. The one decorative liberty is
-   the card's left edge rule, which encodes priority by thickness and
-   overdue by colour. */
+   Thesis: colour is attention, and there is exactly one colour — same
+   black-and-red identity as ../ui/ (see that file's header for the full
+   rationale). Red means In Progress, overdue, a bug, the brand mark, a
+   primary button responding to a click. Everything else stays in the
+   ink/grey family. */
 
 :root {
-  --paper:    #FBFAF8;
-  --surface:  #FFFFFF;
-  --sunk:     #F2F1ED;
-  --ink:      #191916;
-  --ink-2:    #5C5C55;
-  --ink-3:    #8E8E85;
-  --rule:     #E4E3DC;
-  --rule-2:   #CFCEC5;
-  --accent:   #3B3F8F;
-  --accent-w: #EEEEF6;
-  --danger:   #A32218;
-  --danger-w: #FBEFEE;
+  --paper:    #0D0D0F;
+  --surface:  #1A1A1E;
+  --sunk:     #050506;
+  --ink:      #F3F1EC;
+  --ink-2:    #9D9A93;
+  --ink-3:    #68655D;
+  --rule:     #232226;
+  --rule-2:   #35333A;
+  --accent:   #E4362C;
+  --accent-rgb: 228, 54, 44;
+  --accent-w: #271210;
+  --danger:   #E4362C;
+  --danger-w: #271210;
 
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   --r: 3px;
-  --shadow-lift: 0 6px 18px rgba(25, 25, 22, .13);
+  --shadow-lift: 0 10px 28px rgba(0, 0, 0, .55);
 }
 
 * { box-sizing: border-box; }
@@ -82,7 +84,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   border-color: var(--ink);
   color: var(--paper);
 }
-.btn-primary:hover { background: #000; }
+.btn-primary:hover { background: var(--accent); border-color: var(--accent); color: var(--ink); }
 
 .btn-quiet { border-color: transparent; background: transparent; color: var(--ink-2); }
 .btn-quiet:hover { background: var(--sunk); color: var(--ink); }
@@ -156,7 +158,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   top: 0;
   z-index: 20;
 }
-.brand { font-weight: 600; text-decoration: none; letter-spacing: -.02em; }
+.brand { font-weight: 700; text-decoration: none; letter-spacing: -.02em; color: var(--accent); }
 
 .nav { display: flex; gap: 4px; }
 .nav a {
@@ -431,7 +433,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .scrim {
   position: fixed;
   inset: 0;
-  background: rgba(25, 25, 22, .28);
+  background: rgba(0, 0, 0, .62);
   display: grid;
   place-items: start center;
   padding: 6vh 16px 16px;
@@ -562,7 +564,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   animation: row-in .22s cubic-bezier(.2, .8, .2, 1) both;
   transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
 }
-.project-row:hover { border-color: var(--rule-2); box-shadow: 0 2px 8px rgba(25, 25, 22, .06); transform: translateY(-1px); }
+.project-row:hover { border-color: var(--rule-2); box-shadow: 0 4px 14px rgba(var(--accent-rgb), .16); transform: translateY(-1px); }
 .project-row .name { font-weight: 500; }
 .project-row .desc { color: var(--ink-2); flex: 1; }
 .project-row .tally { color: var(--ink-3); font-size: 11px; white-space: nowrap; }
@@ -661,7 +663,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   animation: row-in .22s cubic-bezier(.2, .8, .2, 1) both;
   transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
 }
-.board-row:hover { border-color: var(--rule-2); box-shadow: 0 2px 8px rgba(25, 25, 22, .06); transform: translateY(-1px); }
+.board-row:hover { border-color: var(--rule-2); box-shadow: 0 4px 14px rgba(var(--accent-rgb), .16); transform: translateY(-1px); }
 .board-row .name { font-weight: 500; }
 
 /* Components list --------------------------------------------------------- */
@@ -758,11 +760,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
 /* Work item type system --------------------------------------------------- */
 
 :root {
-  --type-epic:    #6E4FA3;
-  --type-story:   #2E7D5B;
-  --type-task:    #3B3F8F;
-  --type-bug:     #A32218;
-  --type-subtask: #74726B;
+  --type-epic:    var(--ink-2);
+  --type-story:   var(--ink-2);
+  --type-task:    var(--ink-2);
+  --type-bug:     var(--accent);
+  --type-subtask: var(--ink-3);
 }
 
 .type-dot {
