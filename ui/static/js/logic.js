@@ -5,15 +5,7 @@
 
 const Logic = (() => {
 
-  /* ---- Statuses and priorities ---------------------------------------- */
-
-  const STATUSES = ['todo', 'in_progress', 'done'];
-
-  const STATUS_LABELS = {
-    todo: 'To Do',
-    in_progress: 'In Progress',
-    done: 'Done',
-  };
+  /* ---- Priorities -------------------------------------------------------- */
 
   const PRIORITY_LABELS = { 1: 'Low', 2: 'Medium', 3: 'High' };
 
@@ -77,18 +69,24 @@ const Logic = (() => {
   /* ---- Grouping and the optimistic move -------------------------------- */
 
   /* The API returns every work item on a board in ONE position-ordered list
-     that interleaves all three statuses, so two items in different columns
-     share a position. Grouping is the client's job. */
-  function groupByStatus(items) {
-    const buckets = { todo: [], in_progress: [], done: [] };
+     that interleaves every column's items, so two items in different columns
+     share a position. Grouping is the client's job.
+
+     `status` is a per-project `WorkItemStatus` id (an integer), not a fixed
+     three-value enum — a project can have any number of statuses, in any
+     category. Every status in `statuses` (from `GET /projects/{id}/statuses/`)
+     gets an entry, empty or not, so a column with no cards still renders. */
+  function groupByStatus(items, statuses) {
+    const buckets = {};
+    (statuses || []).forEach(s => { buckets[s.id] = []; });
     for (const item of items || []) {
-      if (buckets[item.status]) buckets[item.status].push(item);
+      (buckets[item.status] || (buckets[item.status] = [])).push(item);
     }
     return buckets;
   }
 
   function findItem(buckets, itemId) {
-    for (const status of STATUSES) {
+    for (const status of Object.keys(buckets)) {
       const item = buckets[status].find(i => i.id === itemId);
       if (item) return { item, from: status };
     }
@@ -97,7 +95,7 @@ const Logic = (() => {
 
   function removeItem(buckets, itemId) {
     const next = {};
-    for (const status of STATUSES) {
+    for (const status of Object.keys(buckets)) {
       next[status] = buckets[status].filter(i => i.id !== itemId);
     }
     return next;
@@ -154,7 +152,8 @@ const Logic = (() => {
   }
 
   function isOverdue(item) {
-    return Boolean(item.due_date) && item.status !== 'done' && item.due_date < today();
+    const category = item.status_detail && item.status_detail.category;
+    return Boolean(item.due_date) && category !== 'done' && item.due_date < today();
   }
 
   function dueLabel(dateStr) {
@@ -194,7 +193,7 @@ const Logic = (() => {
   }
 
   return {
-    STATUSES, STATUS_LABELS, PRIORITY_LABELS,
+    PRIORITY_LABELS,
     ROLE_LABEL,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,

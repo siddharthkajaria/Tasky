@@ -88,6 +88,11 @@ const Api = (() => {
     createBoard: (fields) => request('/api/boards/', { method: 'POST', body: fields }),
     getBoardWorkItems: (id) => request(`/api/boards/${id}/work-items/`),
 
+    /* Work item statuses. Per-project and configurable (sub-project 3,
+       Workflows) — not the fixed three-value enum the board used to assume.
+       `status` on a work item is one of these ids, never a string. */
+    listStatuses: (projectId) => request(`/api/projects/${projectId}/statuses/`),
+
     /* Work items -------------------------------------------------------- */
     getWorkItem:    (id)         => request(`/api/work-items/${id}/`),
     createWorkItem: (fields)     => request('/api/work-items/', { method: 'POST', body: fields }),

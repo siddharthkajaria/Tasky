@@ -72,10 +72,38 @@ const Store = (() => {
     { id: 22, project: 1, name: 'Frontend' },
   ];
 
+  /* Work item statuses (sub-project 3, Workflows). Per-project and
+     configurable on the real backend; the mock only needs the fixed
+     "simple" 3-status preset every project starts with, since nothing here
+     exercises adding/renaming/reordering statuses. `status` on a work item
+     is always one of these ids, never a string. */
+  let statuses = [];
+  let nextStatusId = 1000;
+  function seedDefaultStatuses(projectId) {
+    const made = [
+      { id: ++nextStatusId, project: projectId, name: 'To Do', category: 'todo', position: 0 },
+      { id: ++nextStatusId, project: projectId, name: 'In Progress', category: 'in_progress', position: 1 },
+      { id: ++nextStatusId, project: projectId, name: 'Done', category: 'done', position: 2 },
+    ];
+    statuses.push(...made);
+    return made;
+  }
+  const statusesForProject = (projectId) =>
+    statuses.filter(s => s.project === Number(projectId)).sort((a, b) => a.position - b.position);
+  const statusById = (sid) => statuses.find(s => s.id === Number(sid)) || null;
+  const defaultStatusId = (projectId) =>
+    statusesForProject(projectId).find(s => s.category === 'todo').id;
+
+  // Seed statuses for every seed project before any work item references one.
+  const [P1_TODO, P1_IN_PROGRESS, P1_DONE] = seedDefaultStatuses(1).map(s => s.id);
+  const [P2_TODO] = seedDefaultStatuses(2).map(s => s.id);
+  seedDefaultStatuses(3);
+  seedDefaultStatuses(4);
+
   let workItems = [];
   function seed(o) {
     const item = Object.assign({
-      description: '', status: 'todo', priority: 2, due_date: null, assignee: null,
+      description: '', status: P1_TODO, priority: 2, due_date: null, assignee: null,
       parent: null, position: 0, components: [], created_by: 1,
       created_at: now(), updated_at: now(),
     }, o);
@@ -88,34 +116,34 @@ const Store = (() => {
      hierarchy and every valid parent shape from the seed alone. */
   const epic = seed({
     id: 31, key: 'TASKY-1', board: 11, item_type: 'epic', title: 'Redesign onboarding',
-    status: 'in_progress', position: 0, priority: 3, assignee: 1, due_date: day(9),
+    status: P1_IN_PROGRESS, position: 0, priority: 3, assignee: 1, due_date: day(9),
     description: 'Everything a new teammate sees in their first ten minutes.',
   });
   const story = seed({
     id: 32, key: 'TASKY-2', board: 11, item_type: 'story', parent: epic.id,
-    title: 'Design the welcome screen', status: 'todo', position: 0, assignee: 3,
+    title: 'Design the welcome screen', status: P1_TODO, position: 0, assignee: 3,
     components: [22],
   });
   const task = seed({
     id: 33, key: 'TASKY-3', board: 11, item_type: 'task', parent: epic.id,
-    title: 'Wire up the onboarding API', status: 'todo', position: 1, assignee: 2,
+    title: 'Wire up the onboarding API', status: P1_TODO, position: 1, assignee: 2,
     due_date: day(-2), components: [21],
   });
   seed({
     id: 34, key: 'TASKY-4', board: 11, item_type: 'subtask', parent: story.id,
-    title: 'Write the welcome copy', status: 'todo', position: 2,
+    title: 'Write the welcome copy', status: P1_TODO, position: 2,
   });
   const bug = seed({
     id: 35, key: 'TASKY-5', board: 11, item_type: 'bug', title: 'Signup button misaligned on Safari',
-    status: 'in_progress', position: 1, priority: 3, assignee: 1, due_date: day(1),
+    status: P1_IN_PROGRESS, position: 1, priority: 3, assignee: 1, due_date: day(1),
   });
   seed({
     id: 36, key: 'TASKY-6', board: 11, item_type: 'task', title: 'Session auth, same origin',
-    status: 'done', position: 0, assignee: 1,
+    status: P1_DONE, position: 0, assignee: 1,
   });
   seed({
     id: 37, key: 'WEB-1', board: 13, item_type: 'bug', title: 'Compress the hero image',
-    status: 'in_progress', position: 0, priority: 1, due_date: day(-5), assignee: 1,
+    status: P2_TODO, position: 0, priority: 1, due_date: day(-5), assignee: 1,
   });
 
   let links = [
@@ -184,7 +212,10 @@ const Store = (() => {
 
   const boardOut = (b) => Object.assign({}, b, { created_by: userById(b.created_by) });
 
-  const summaryOut = (w) => w && ({ id: w.id, key: w.key, title: w.title, item_type: w.item_type, status: w.status });
+  const summaryOut = (w) => w && ({
+    id: w.id, key: w.key, title: w.title, item_type: w.item_type,
+    status: w.status, status_detail: statusById(w.status),
+  });
 
   function itemOut(w) {
     return Object.assign({}, w, {
@@ -193,6 +224,7 @@ const Store = (() => {
       priority_label: Logic.PRIORITY_LABELS[w.priority],
       parent_detail: w.parent ? summaryOut(itemById(w.parent)) : null,
       components_detail: components.filter(c => w.components.includes(c.id)),
+      status_detail: statusById(w.status),
     });
   }
 
@@ -252,6 +284,7 @@ const Store = (() => {
     projects.push(project);
     memberships.push({ id: id(), project: project.id, user: me.id, role: 'owner', joined_at: now() });
     itemCounters[project.id] = 1;
+    seedDefaultStatuses(project.id);
     return wait(projectOut(project));
   }
 
@@ -412,8 +445,8 @@ const Store = (() => {
     return wait(boardOut(board));
   }
 
-  /* Every work item on the board in ONE position-ordered list across all
-     three statuses — interleaved, exactly like the real endpoint. */
+  /* Every work item on the board in ONE position-ordered list across every
+     status — interleaved, exactly like the real endpoint. */
   function getBoardWorkItems(boardId) {
     const board = boardById(boardId);
     if (!board) return fail(404, { detail: 'Not found.' });
@@ -423,6 +456,12 @@ const Store = (() => {
                .sort((a, b) => a.position - b.position || a.id - b.id)
                .map(itemOut)
     );
+  }
+
+  function listStatuses(projectId) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    if (!myRole(projectId)) return denied();
+    return wait(statusesForProject(projectId));
   }
 
   /* ---- work items ------------------------------------------------------ */
@@ -461,7 +500,10 @@ const Store = (() => {
     const hErr = hierarchyError(itemType, parent);
     if (hErr) return fail(400, { parent: hErr });
 
-    const status = fields.status || 'todo';
+    const status = fields.status ? Number(fields.status) : defaultStatusId(board.project);
+    if (!statusById(status) || statusById(status).project !== board.project) {
+      return fail(400, { status: 'Status must belong to this item\'s project.' });
+    }
     const siblings = workItems.filter(w => w.board === board.id && w.status === status);
     const item = seed({
       id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
@@ -707,7 +749,8 @@ const Store = (() => {
 
   const myTasks = () => wait(
     workItems
-      .filter(w => me && w.assignee === me.id && w.status !== 'done' && myRole(boardProject(w.board)))
+      .filter(w => me && w.assignee === me.id &&
+        (statusById(w.status) || {}).category !== 'done' && myRole(boardProject(w.board)))
       .sort((a, b) => {
         if (a.due_date !== b.due_date) {
           if (!a.due_date) return 1;
@@ -724,7 +767,7 @@ const Store = (() => {
     listProjects, getProject, createProject, deleteProject,
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
     listMyInvitations, acceptInvitation, declineInvitation,
-    listBoards, getBoard, createBoard, getBoardWorkItems,
+    listBoards, getBoard, createBoard, getBoardWorkItems, listStatuses,
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
     listLinks, createLink, deleteLink,

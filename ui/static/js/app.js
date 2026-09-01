@@ -773,12 +773,14 @@ async function openTransferModal(project) {
 
 /* Board ---------------------------------------------------------------- */
 
-let boardState = { projectId: null, boardId: null, buckets: null, components: [] };
+let boardState = { projectId: null, boardId: null, buckets: null, statuses: [], components: [] };
 
+// Real column names aren't known until the project's statuses are fetched,
+// so the skeleton just shows generic placeholders while that's in flight.
 function skeletonColumns() {
-  return Logic.STATUSES.map(s =>
+  return Array.from({ length: 3 }, () =>
     `<section class="column"><div class="column-head">` +
-      `<span class="dot"></span><span class="label">${Logic.STATUS_LABELS[s]}</span>` +
+      `<span class="dot"></span><span class="label">&nbsp;</span>` +
     `</div><ul class="skeleton-list">${
       Array.from({ length: 3 }, () => '<li class="skeleton-row tall"></li>').join('')
     }</ul></section>`
@@ -788,7 +790,7 @@ function skeletonColumns() {
 async function viewBoard(projectId, boardId) {
   const main = outlet();
   main.replaceChildren(tpl('tpl-board'));
-  boardState = { projectId: Number(projectId), boardId: Number(boardId), buckets: null, components: [] };
+  boardState = { projectId: Number(projectId), boardId: Number(boardId), buckets: null, statuses: [], components: [] };
 
   main.querySelector('[data-back-link]').href = `#/projects/${projectId}`;
   main.querySelector('[data-type-legend]').innerHTML = Logic.ITEM_TYPES.map(t =>
@@ -799,10 +801,11 @@ async function viewBoard(projectId, boardId) {
   columnsEl.innerHTML = skeletonColumns();
 
   try {
-    const [board, project, items] = await Promise.all([
+    const [board, project, items, statuses] = await Promise.all([
       data.getBoard(boardId),
       data.getProject(projectId),
       data.getBoardWorkItems(boardId),
+      data.listStatuses(projectId),
     ]);
 
     main.querySelector('[data-board-name]').textContent = board.name;
@@ -815,7 +818,8 @@ async function viewBoard(projectId, boardId) {
        shares one project, so this is fetched once per board visit. */
     try { boardState.components = await data.listComponents(projectId); } catch { boardState.components = []; }
 
-    boardState.buckets = Logic.groupByStatus(items);
+    boardState.statuses = statuses;
+    boardState.buckets = Logic.groupByStatus(items, statuses);
     paintColumns();
   } catch (err) {
     if (err && err.sessionExpired) return handle(err);
@@ -829,34 +833,37 @@ async function viewBoard(projectId, boardId) {
 
 async function reloadBoard() {
   const items = await data.getBoardWorkItems(boardState.boardId);
-  boardState.buckets = Logic.groupByStatus(items);
+  boardState.buckets = Logic.groupByStatus(items, boardState.statuses);
   paintColumns();
 }
 
 function boardItems() {
   if (!boardState.buckets) return [];
-  return Logic.STATUSES.flatMap(s => boardState.buckets[s]);
+  return Object.values(boardState.buckets).flat();
 }
 
 function paintColumns(buckets) {
   if (buckets) boardState.buckets = buckets;
   const columnsEl = root.querySelector('[data-columns]');
   if (!columnsEl) return;
-  columnsEl.replaceChildren(...Logic.STATUSES.map(s => columnEl(s, boardState.buckets[s])));
+  columnsEl.replaceChildren(...boardState.statuses.map(s => columnEl(s, boardState.buckets[s.id] || [])));
 }
 
+// `status` is a WorkItemStatus row ({id, name, category}) — several statuses
+// can share a category (see Logic/docs/api.md), so visual treatment keys off
+// `status.category`, never off `status.name`.
 function columnEl(status, items) {
   const col = document.createElement('section');
   col.className = 'column';
-  if (status === 'in_progress') col.classList.add('column-active');
-  if (status === 'done') col.classList.add('column-done');
-  col.dataset.status = status;
+  if (status.category === 'in_progress') col.classList.add('column-active');
+  if (status.category === 'done') col.classList.add('column-done');
+  col.dataset.status = status.id;
 
   const head = document.createElement('div');
   head.className = 'column-head';
   head.innerHTML =
     `<span class="dot"></span>` +
-    `<span class="label">${Logic.STATUS_LABELS[status]}</span>` +
+    `<span class="label">${esc(status.name)}</span>` +
     `<span class="count">${items.length}</span>`;
   col.appendChild(head);
 
@@ -866,14 +873,14 @@ function columnEl(status, items) {
   if (!items.length) {
     const empty = document.createElement('p');
     empty.className = 'column-empty';
-    empty.textContent = status === 'done' ? 'Nothing finished yet.' : 'Nothing here — drop one in.';
+    empty.textContent = status.category === 'done' ? 'Nothing finished yet.' : 'Nothing here — drop one in.';
     stack.appendChild(empty);
   }
   items.forEach(item => stack.appendChild(workItemCard(item)));
   col.appendChild(stack);
 
-  col.appendChild(addWorkItemControl(status));
-  wireDrop(col, stack, status);
+  col.appendChild(addWorkItemControl(status.id));
+  wireDrop(col, stack, status.id);
   return col;
 }
 
@@ -1107,7 +1114,7 @@ async function openWorkItemModal(itemId) {
       `<textarea name="description" placeholder="What does done look like?">${esc(item.description)}</textarea></label>` +
     `<div class="grid-3">` +
       `<label class="field"><span>Status</span><select name="status">${
-        Logic.STATUSES.map(s => `<option value="${s}"${item.status === s ? ' selected' : ''}>${Logic.STATUS_LABELS[s]}</option>`).join('')
+        (boardState.statuses || []).map(s => `<option value="${s.id}"${item.status === s.id ? ' selected' : ''}>${esc(s.name)}</option>`).join('')
       }</select></label>` +
       `<label class="field"><span>Priority</span><select name="priority">` +
         `<option value="1"${item.priority === 1 ? ' selected' : ''}>Low</option>` +
@@ -1187,7 +1194,7 @@ async function openWorkItemModal(itemId) {
       components: Array.from(modal.querySelectorAll('.chip-check input:checked')).map(i => i.value),
     }, item.item_type);
 
-    const newStatus = modal.querySelector('[name=status]').value;
+    const newStatus = Number(modal.querySelector('[name=status]').value);
 
     try {
       /* `status` is not PATCHable — the move endpoint is the only thing that
@@ -1261,7 +1268,7 @@ async function loadChildren(item, ctx) {
           `<span class="type-badge type-${esc(child.item_type)}">${esc(Logic.ITEM_TYPE_LABEL[child.item_type])}</span>` +
           `<span class="link-title">${esc(child.title)}</span>` +
         `</a>` +
-        `<span class="status-tag">${esc(Logic.STATUS_LABELS[child.status])}</span>`;
+        `<span class="status-tag">${esc(child.status_detail ? child.status_detail.name : '')}</span>`;
       li.querySelector('[data-open-item]').addEventListener('click', (e) => {
         e.preventDefault();
         /* Jump straight to the child. The parent modal closes so the stack
@@ -1442,7 +1449,7 @@ function taskRow(item) {
     `<span class="type-badge type-${esc(item.item_type)}">${esc(Logic.ITEM_TYPE_LABEL[item.item_type])}</span>` +
     `<span class="t">${esc(item.title)}</span>` +
     due +
-    `<span class="state ${item.status === 'in_progress' ? 'active' : ''}">${esc(Logic.STATUS_LABELS[item.status])}</span>`;
+    `<span class="state ${item.status_detail && item.status_detail.category === 'in_progress' ? 'active' : ''}">${esc(item.status_detail ? item.status_detail.name : '')}</span>`;
 
   /* The tasks endpoint returns a board id but no project id, so the board
      route resolves the project itself and rewrites the hash. */
