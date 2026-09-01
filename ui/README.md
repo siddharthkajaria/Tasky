@@ -15,7 +15,7 @@ Then open http://localhost:8000 and sign in. Local accounts come from:
 
 ```bash
 docker compose run --rm web python manage.py seed_demo
-# users: asha / kabir / lena   password: demo-password-12345
+# users: asha / kabir / lena   password: password
 ```
 
 ## Run it from VS Code's "Go Live"

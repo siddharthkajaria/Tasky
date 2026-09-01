@@ -18,7 +18,7 @@ from boards.models import Board, WorkItem
 from boards.services import seed_default_statuses
 from projects.models import Project, ProjectMembership
 
-DEMO_PASSWORD = "demo-password-12345"
+DEMO_PASSWORD = "password"
 
 PEOPLE = [
     ("asha", "Asha", "Rao"),
