@@ -262,6 +262,43 @@ port 80 only answers Cloudflare, so an HTTP-01 challenge cannot reach you.
 
 ---
 
+## Keeping crawlers and bots out
+
+Tasky is internal. Nothing here belongs in a search index, and the login page
+should not be discoverable at all.
+
+Four layers ship in this repo, and one does not:
+
+| Layer | Where | Covers |
+|---|---|---|
+| `/robots.txt` — `Disallow: /` | `ui/robots.txt`, routed in `config/urls.py` | Well-behaved crawlers, before they fetch anything |
+| `X-Robots-Tag` response header | `config/middleware.py` | Every Django response, including API 403s |
+| Same header on `/static/` | `deploy/apache/tasky-*.conf` | Static files, which Apache's `Alias` answers without ever reaching Django |
+| `<meta name="robots">` | `ui/index.html` | The one page a crawler can actually render |
+| **Cloudflare Bot Fight Mode** | **Dashboard — not in this repo** | **Bots that ignore all of the above** |
+
+**Only the last one is enforcement.** The first four are a request. A scraper or
+a vulnerability scanner reads `Disallow: /` and carries on, so treat the repo
+layers as "keep Tasky out of Google", not as a block.
+
+Enable the real one — required, not optional, now the origin is public:
+
+1. Cloudflare → your zone → **Security** → **Bots** → turn on **Bot Fight Mode**.
+2. Optional but worth it while `/api/auth/login/` is still unthrottled
+   (see `docs/follow-ups.md`): **Security** → **WAF** → **Rate limiting rules**,
+   matching `http.request.uri.path eq "/api/auth/login/"`, a handful of requests
+   per minute per IP, action *Block*.
+
+The rate-limiting rule matters more than it looks. The login endpoint has no
+throttling of its own and returns the same message for an unknown user and a
+wrong password — good for stopping enumeration, useless against a bot that just
+keeps guessing. Cloudflare is what makes that expensive.
+
+Note that `Disallow: /` also covers `/admin/`, which is how teammates are
+created today.
+
+---
+
 ## What `make deploy-prod` does
 
 Refuses to start unless you are on `main` with a clean tree — the image is built
@@ -326,6 +363,11 @@ curl -sI https://tasky.tailwebs.com/ | grep -iE 'strict-transport|x-frame|x-cont
 # 7. The origin is NOT reachable except through Cloudflare.
 #    This should TIME OUT. If it answers, the security group is open.
 curl -m 8 -sI http://<EC2-public-IP>/ && echo "EXPOSED — fix the security group"
+
+# 8. Crawlers are told to stay out, and pages say so too.
+curl -s https://tasky.tailwebs.com/robots.txt          # expect: Disallow: /
+curl -sI https://tasky.tailwebs.com/ | grep -i x-robots-tag
+curl -sI https://tasky.tailwebs.com/static/css/app.css | grep -i x-robots-tag
 ```
 
 Then sign in through the browser once and confirm the session sticks across a
@@ -339,6 +381,9 @@ page refresh — that is the end-to-end proof that `CSRF_TRUSTED_ORIGINS`,
 - [ ] Confirm **no `seed_demo` data** exists. The command now refuses a non-local
       database host, but check.
 - [ ] **Rotate the RDS password** if it has ever been shown in a terminal.
+- [ ] **Enable Cloudflare Bot Fight Mode** — the repo's `robots.txt` and
+      `X-Robots-Tag` are advisory; this is the only layer that blocks a bot
+      that ignores them. See *Keeping crawlers and bots out* above.
 - [ ] Take a first backup: `make prod-backup`.
 
 ---

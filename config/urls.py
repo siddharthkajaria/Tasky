@@ -21,6 +21,14 @@ urlpatterns = [
         RedirectView.as_view(url=static("img/favicon-150.png"), permanent=True),
         name="favicon",
     ),
+    # Tasky is internal. Must stay above the catch-all: below it, /robots.txt
+    # is answered with the SPA shell — a 200 of HTML, which a crawler parses as
+    # no restrictions at all, the opposite of what this says.
+    path(
+        "robots.txt",
+        TemplateView.as_view(template_name="robots.txt", content_type="text/plain"),
+        name="robots",
+    ),
     # Last on purpose. Registered any earlier this swallows /api/ and /admin/.
     # The negative lookahead is belt and braces — routing already tries the
     # patterns above first — but it keeps the intent explicit and makes the

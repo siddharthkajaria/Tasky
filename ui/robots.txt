@@ -1,0 +1,10 @@
+# Tasky is an internal tool. There is nothing here to index — every page
+# behind the login is private, and the login page itself should not appear in
+# search results.
+#
+# Served by Django (config/urls.py), not as a static file, so it is identical
+# in local, staging and production. This is a request, not a control: a crawler
+# that ignores it is stopped by Cloudflare instead. See docs/deployment.md.
+
+User-agent: *
+Disallow: /

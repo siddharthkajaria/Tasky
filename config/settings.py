@@ -130,6 +130,12 @@ INSTALLED_APPS = [
 AUTH_USER_MODEL = "accounts.User"
 
 MIDDLEWARE = [
+    # Outermost on purpose. The response phase runs inside-out, so this is
+    # the last to touch a response and therefore the only position that
+    # sees every one — including a redirect short-circuited by
+    # SecurityMiddleware's SECURE_SSL_REDIRECT, which never reaches the
+    # middleware below it.
+    'config.middleware.RobotsTagMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
