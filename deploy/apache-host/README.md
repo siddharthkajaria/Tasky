@@ -31,7 +31,7 @@ Phase 2 replaces phase 1; do not enable both.
 ## Install (phase 1)
 
 ```bash
-sudo a2enmod proxy proxy_http headers
+sudo a2enmod proxy proxy_http headers rewrite
 sudo cp deploy/apache-host/tasky.conf /etc/apache2/sites-available/tasky.conf
 sudo a2ensite tasky
 sudo apache2ctl configtest          # must pass
