@@ -18,7 +18,26 @@ export COMPOSE_HTTP_TIMEOUT
         build check-deploy cf-ips \
         deploy-stage deploy-stage-here stage-up stage-down stage-migrate stage-logs stage-shell \
         deploy-prod prod-up prod-down prod-migrate prod-logs prod-shell prod-verify prod-certs prod-backup \
-        clean
+        local-env prod-createsuperuser stage-createsuperuser clean
+
+# Every target below the "Local development" heading runs against .env. On a
+# production server that file does not exist, and compose's raw "env file not
+# found" says nothing about which target you actually wanted.
+local-env:
+	@test -f .env || { \
+		echo "FATAL: .env is missing — this is a LOCAL development target."; \
+		echo ""; \
+		if [ -f .env.prod ]; then echo "       This looks like the production server. You probably want:"; \
+			echo "         make prod-createsuperuser   make prod-shell   make prod-logs"; \
+			echo "         make deploy-prod            make prod-verify"; \
+		else echo "       Create it first:  cp docs/.env.local.example .env"; fi; \
+		echo ""; \
+		exit 1; \
+	}
+
+run run-d stop restart logs ps shell dbshell \
+test test-fast test-coverage smoke lint lint-fix format format-check \
+migrate makemigrations showmigrations createsuperuser collectstatic check-deploy: | local-env
 
 help:  ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -247,6 +266,9 @@ stage-migrate:  ## Migrate the staging database
 stage-logs:  ## Follow staging logs
 	ENV_FILE=.env.stage $(DC_STAGE) logs -f
 
+stage-createsuperuser:  ## Create a Site Admin on staging
+	$(STAGE_VARS) $(DC_STAGE) run --rm web python manage.py createsuperuser
+
 stage-shell:  ## Django shell against staging
 	ENV_FILE=.env.stage $(DC_STAGE) run --rm web python manage.py shell
 
@@ -291,6 +313,9 @@ prod-migrate:  ## Migrate the production database
 prod-logs:  ## Follow production logs
 	$(PROD_VARS) $(DC_PROD) logs -f
 
+prod-createsuperuser:  ## Create the first Site Admin on production
+	$(PROD_VARS) $(DC_PROD) run --rm web python manage.py createsuperuser
+
 prod-shell:  ## Django shell against production
 	$(PROD_VARS) $(DC_PROD) run --rm web python manage.py shell
 
@@ -302,7 +327,8 @@ prod-verify:  ## Post-deploy checks — run this after every production deploy
 	  n=$$($(PROD_VARS) $(DC_PROD) ps --status running -q | wc -l | tr -d ' '); \
 	  if [ "$$n" = "2" ]; then echo "PASS  web + proxy"; else echo "FAIL  $$n of 2 running"; fail=1; fi; \
 	printf "  %-46s" "gunicorn NOT published to the host"; \
-	  if $(PROD_VARS) $(DC_PROD) port web 8000 >/dev/null 2>&1; then echo "FAIL  port 8000 is published"; fail=1; else echo "PASS"; fi; \
+	  p=$$($(PROD_VARS) $(DC_PROD) port web 8000 2>/dev/null | grep -v invalid | grep -E ':[1-9][0-9]*$$' || true); \
+	  if [ -n "$$p" ]; then echo "FAIL  published at $$p"; fail=1; else echo "PASS"; fi; \
 	printf "  %-46s" "SPA shell answers"; \
 	  c=$$(curl -s $(PROD_CURL_FLAGS) $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 $(PROD_BASE)/); \
 	  if [ "$$c" = "200" ]; then echo "PASS  200"; else echo "FAIL  got $$c"; fail=1; fi; \
@@ -318,8 +344,12 @@ prod-verify:  ## Post-deploy checks — run this after every production deploy
 	printf "  %-46s" "no unapplied migrations"; \
 	  if $(PROD_VARS) $(DC_PROD) run --rm web python manage.py migrate --check >/dev/null 2>&1; then echo "PASS"; else echo "FAIL  run: make prod-migrate"; fail=1; fi; \
 	printf "  %-46s" "Django deployment audit"; \
-	  o=$$($(PROD_VARS) $(DC_PROD) run --rm web python manage.py check --deploy --fail-level WARNING 2>&1 | tail -1); \
-	  case "$$o" in *"no issues"*) echo "PASS";; *) echo "FAIL  $$o"; fail=1;; esac; \
+	  o=$$($(PROD_VARS) $(DC_PROD) run --rm -T web python manage.py check --deploy 2>&1 | grep -oE 'security\.[EW][0-9]+' | sort -u | tr '\n' ' '); \
+	  e=$$(echo "$$o" | grep -o 'security\.E[0-9]*' | tr '\n' ' '); \
+	  if [ -n "$$e" ]; then echo "FAIL  errors: $$e"; fail=1; \
+	  elif [ -z "$$o" ]; then echo "PASS  clean"; \
+	  elif [ "$(PROD_TLS)" = "on" ]; then echo "FAIL  warnings must be clear in phase 2: $$o"; fail=1; \
+	  else echo "PASS  phase-1 warnings (expected): $$o"; fi; \
 	echo "─────────────────────────────────────────────────────────────────────"; \
 	if [ "$$fail" = "0" ]; then echo "  All checks passed."; else echo "  SOME CHECKS FAILED — see docs/deployment.md"; exit 1; fi
 
