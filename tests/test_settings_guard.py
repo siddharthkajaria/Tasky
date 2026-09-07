@@ -10,6 +10,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 
 def _import_settings(env_overrides: dict, unset: tuple = ()) -> subprocess.CompletedProcess:
     env = {**os.environ, **env_overrides}
@@ -67,3 +69,33 @@ def test_importing_settings_in_the_test_environment_does_not_raise():
     result = _import_settings({"DJANGO_SETTINGS_MODULE": "config.settings"})
 
     assert result.returncode == 0, result.stderr
+
+
+def test_x_forwarded_host_is_not_trusted():
+    """USE_X_FORWARDED_HOST must stay off.
+
+    Every proxy in the chain appends to X-Forwarded-Host. Production runs two
+    (the host Apache, then the container's), so Django would see
+    "tasky.tailwebs.com, tasky.tailwebs.com" and reject every browser request
+    with 400 DisallowedHost — while the single-hop container healthcheck kept
+    passing, so the stack looked healthy. Both vhosts set ProxyPreserveHost On,
+    which makes the original Host header correct without this.
+    """
+    from django.conf import settings
+
+    assert getattr(settings, "USE_X_FORWARDED_HOST", False) is False
+
+
+@pytest.mark.django_db
+def test_appended_x_forwarded_host_is_rejected_not_honoured(client):
+    """The concrete failure: a comma-joined X-Forwarded-Host must not be able to
+    stand in for the real Host header."""
+    response = client.get(
+        "/api/auth/csrf/",
+        HTTP_HOST="testserver",
+        HTTP_X_FORWARDED_HOST="evil.example.com, testserver",
+    )
+    # Host (testserver) is what counts, so this succeeds; if USE_X_FORWARDED_HOST
+    # were on, the joined value would be used instead and this would be a 400.
+    assert response.status_code == 204
+
