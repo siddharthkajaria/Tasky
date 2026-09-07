@@ -80,7 +80,21 @@ CSRF_TRUSTED_ORIGINS = _env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 # claim https on a plaintext connection.
 if _env_flag("DJANGO_BEHIND_PROXY"):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-    USE_X_FORWARDED_HOST = True
+
+# USE_X_FORWARDED_HOST is deliberately NOT set, even behind a proxy.
+#
+# Every proxy in the chain *appends* to X-Forwarded-Host. In production the
+# chain is two hops — the host Apache, then the container's Apache — so Django
+# would receive "tasky.tailwebs.com, tasky.tailwebs.com" and reject it with
+# 400 DisallowedHost, since a comma-joined value matches no ALLOWED_HOSTS entry.
+# It fails only through the full chain: a single-hop request (the container
+# healthcheck) sends one value and passes, which makes it look like the app is
+# healthy while every browser gets a 400.
+#
+# It is also unnecessary. Both vhosts set ProxyPreserveHost On, so the original
+# Host header survives untouched and Django's default HTTP_HOST is correct.
+# Only turn this on for a proxy that rewrites Host instead of preserving it,
+# and then only with exactly one such proxy in front.
 
 # Cookies default to secure whenever DEBUG is off, so forgetting the flag fails
 # closed rather than shipping session cookies over plaintext.

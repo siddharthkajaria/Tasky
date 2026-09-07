@@ -153,6 +153,19 @@ STAGE_VARS = $(call compose_vars,.env.stage)
 PROD_DOMAIN := tasky.tailwebs.com
 HOSTHDR     := -H "Host: $(PROD_DOMAIN)"
 
+# The final health poll must target whatever the proxy actually publishes.
+# Hardcoding https://127.0.0.1/ meant that with TASKY_TLS=off and a loopback
+# bind there was nothing listening there at all, so a perfectly healthy deploy
+# reported failure after 60s.
+prod_env    = $(shell grep -sE '^$(1)=' .env.prod | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')
+prod_port   = $(lastword $(subst :, ,$(call prod_env,$(1))))
+PROD_TLS         = $(call prod_env,TASKY_TLS)
+PROD_HTTP_PORT   = $(or $(call prod_port,TASKY_HTTP_BIND),80)
+PROD_HTTPS_PORT  = $(or $(call prod_port,TASKY_HTTPS_BIND),443)
+PROD_BASE        = $(if $(filter on,$(PROD_TLS)),https://127.0.0.1:$(PROD_HTTPS_PORT),http://127.0.0.1:$(PROD_HTTP_PORT))
+PROD_HEALTH_URL  = $(PROD_BASE)/api/auth/csrf/
+PROD_CURL_FLAGS  = $(if $(filter on,$(PROD_TLS)),-k,)
+
 PROD_BRANCH  := main
 STAGE_BRANCH := stage
 
@@ -263,7 +276,7 @@ deploy-prod:  ## Full production deploy from 'main' (prompts first)
 		echo "       See docs/deployment.md -> 'Sharing the server with another app'."; \
 		exit 1; \
 	fi
-	$(call deploy,production,$(DC_PROD),.env.prod,https://127.0.0.1/api/auth/csrf/,-k)
+	$(call deploy,production,$(DC_PROD),.env.prod,$(PROD_HEALTH_URL),$(PROD_CURL_FLAGS))
 	@$(MAKE) --no-print-directory prod-verify
 
 prod-up:  ## Start production without rebuilding
@@ -291,16 +304,16 @@ prod-verify:  ## Post-deploy checks — run this after every production deploy
 	printf "  %-46s" "gunicorn NOT published to the host"; \
 	  if $(PROD_VARS) $(DC_PROD) port web 8000 >/dev/null 2>&1; then echo "FAIL  port 8000 is published"; fail=1; else echo "PASS"; fi; \
 	printf "  %-46s" "SPA shell answers"; \
-	  c=$$(curl -sk $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/ 2>/dev/null || curl -s $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/); \
+	  c=$$(curl -s $(PROD_CURL_FLAGS) $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 $(PROD_BASE)/); \
 	  if [ "$$c" = "200" ]; then echo "PASS  200"; else echo "FAIL  got $$c"; fail=1; fi; \
 	printf "  %-46s" "unauthenticated API returns 403 not 401"; \
-	  c=$$(curl -sk $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/api/projects/ 2>/dev/null || curl -s $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/api/projects/); \
+	  c=$$(curl -s $(PROD_CURL_FLAGS) $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 $(PROD_BASE)/api/projects/); \
 	  if [ "$$c" = "403" ]; then echo "PASS  403"; else echo "FAIL  got $$c"; fail=1; fi; \
 	printf "  %-46s" "static served by Apache"; \
-	  s=$$(curl -skI $(HOSTHDR) --max-time 10 https://127.0.0.1/static/js/app.js 2>/dev/null | grep -i '^server:' || curl -sI $(HOSTHDR) --max-time 10 http://127.0.0.1/static/js/app.js | grep -i '^server:'); \
+	  s=$$(curl -sI $(PROD_CURL_FLAGS) $(HOSTHDR) --max-time 10 $(PROD_BASE)/static/js/app.js | grep -i '^server:'); \
 	  case "$$s" in *Apache*) echo "PASS  $$s";; *) echo "FAIL  $$s"; fail=1;; esac; \
 	printf "  %-46s" "DEBUG is off (404 is not a traceback)"; \
-	  b=$$(curl -sk $(HOSTHDR) --max-time 10 https://127.0.0.1/api/nope/ 2>/dev/null || curl -s $(HOSTHDR) --max-time 10 http://127.0.0.1/api/nope/); \
+	  b=$$(curl -s $(PROD_CURL_FLAGS) $(HOSTHDR) --max-time 10 $(PROD_BASE)/api/nope/); \
 	  case "$$b" in *Traceback*|*DEBUG*) echo "FAIL  traceback leaked"; fail=1;; *) echo "PASS";; esac; \
 	printf "  %-46s" "no unapplied migrations"; \
 	  if $(PROD_VARS) $(DC_PROD) run --rm web python manage.py migrate --check >/dev/null 2>&1; then echo "PASS"; else echo "FAIL  run: make prod-migrate"; fail=1; fi; \
