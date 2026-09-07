@@ -133,10 +133,20 @@ DC_STAGE := docker compose -f docker-compose.stage.yml
 # value documented in docs/deployment.md is the value that takes effect.
 # Empty or absent falls through to the ${TASKY_TLS:-on} default in the compose file.
 envvar = $(2)=$(shell grep -sE '^$(2)=' $(1) | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')
-tls_from = $(call envvar,$(1),TASKY_TLS)
-PROD_VARS  = ENV_FILE=.env.prod $(call tls_from,.env.prod) \
-             $(call envvar,.env.prod,TASKY_HTTP_BIND) $(call envvar,.env.prod,TASKY_HTTPS_BIND)
-STAGE_VARS = ENV_FILE=.env.stage
+
+# EVERY compose-level variable for a given env file, in one place. There must be
+# exactly one of these: the deploy macro and the prod-* targets previously built
+# their prefixes separately, so a variable added to one silently did not reach
+# the other, and `make deploy-prod` kept trying to bind 0.0.0.0:80 on a server
+# where TASKY_HTTP_BIND said otherwise. An absent key yields NAME= , which
+# compose treats as unset and falls through to the default in the compose file.
+compose_vars = ENV_FILE=$(1) \
+               $(call envvar,$(1),TASKY_TLS) \
+               $(call envvar,$(1),TASKY_HTTP_BIND) \
+               $(call envvar,$(1),TASKY_HTTPS_BIND)
+
+PROD_VARS  = $(call compose_vars,.env.prod)
+STAGE_VARS = $(call compose_vars,.env.stage)
 
 # ALLOWED_HOSTS is only the real domain, so every loopback probe must carry a
 # matching Host header or Django answers 400 DisallowedHost.
@@ -150,20 +160,20 @@ STAGE_BRANCH := stage
 define deploy
 	@echo ""
 	@echo "==> [$(1)] 1/6  building images"
-	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) build
+	$(call compose_vars,$(3)) $(2) build
 	@echo ""
 	@echo "==> [$(1)] 2/6  checking for unapplied model changes"
-	@ENV_FILE=$(3) $(call tls_from,$(3)) $(2) run --rm web python manage.py makemigrations --check --dry-run \
+	@$(call compose_vars,$(3)) $(2) run --rm web python manage.py makemigrations --check --dry-run \
 		|| { echo "FATAL: models have changes with no migration. Run 'make makemigrations' and commit them."; exit 1; }
 	@echo ""
 	@echo "==> [$(1)] 3/6  applying migrations"
-	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) run --rm web python manage.py migrate --noinput
+	$(call compose_vars,$(3)) $(2) run --rm web python manage.py migrate --noinput
 	@echo ""
 	@echo "==> [$(1)] 4/6  collecting static files"
-	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) run --rm web python manage.py collectstatic --noinput
+	$(call compose_vars,$(3)) $(2) run --rm web python manage.py collectstatic --noinput
 	@echo ""
 	@echo "==> [$(1)] 5/6  starting the app"
-	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) up -d --remove-orphans
+	$(call compose_vars,$(3)) $(2) up -d --remove-orphans
 	@echo ""
 	@echo "==> [$(1)] 6/6  waiting for a healthy response from $(4)"
 	@ok=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
@@ -172,7 +182,7 @@ define deploy
 	done; \
 	if [ "$$ok" != "1" ]; then \
 		echo ""; echo "FAILED: no healthy response after 60s. Recent logs:"; \
-		ENV_FILE=$(3) $(call tls_from,$(3)) $(2) logs --tail 40; \
+		$(call compose_vars,$(3)) $(2) logs --tail 40; \
 		exit 1; \
 	fi
 	@echo ""
@@ -182,7 +192,7 @@ define deploy
 	@docker container prune -f >/dev/null 2>&1 || true
 	@echo ""
 	@echo "  [$(1)] deploy complete and healthy."
-	@ENV_FILE=$(3) $(call tls_from,$(3)) $(2) ps
+	@$(call compose_vars,$(3)) $(2) ps
 endef
 
 # Refuse to deploy from the wrong branch or a dirty tree — the image is built
@@ -237,6 +247,22 @@ deploy-prod:  ## Full production deploy from 'main' (prompts first)
 	@echo "  This migrates the production RDS database and restarts the live site."
 	@echo ""
 	@read -p "  Continue? [y/N] " ok; [ "$$ok" = "y" ] || { echo "Aborted."; exit 1; }
+	@# Turn "address already in use" into something actionable. On a shared box
+	@# another web server owns :80, and the fix is TASKY_HTTP_BIND, not a retry.
+	@bind=$$(grep -sE '^TASKY_HTTP_BIND=' .env.prod | tail -1 | cut -d= -f2-); \
+	if [ -z "$$bind" ] && command -v ss >/dev/null 2>&1 && ss -lnt 2>/dev/null | grep -qE ':80[[:space:]]'; then \
+		echo ""; \
+		echo "FATAL: something already listens on port 80, and TASKY_HTTP_BIND is not set"; \
+		echo "       in .env.prod, so the proxy would try to bind 0.0.0.0:80 and fail."; \
+		echo ""; \
+		ss -lntp 2>/dev/null | grep -E ':80[[:space:]]' | sed 's/^/         /'; \
+		echo ""; \
+		echo "       If this box already runs a web server, put Tasky behind it:"; \
+		echo "         TASKY_HTTP_BIND=127.0.0.1:8081   in .env.prod"; \
+		echo "       then install deploy/apache-host/tasky.conf as a vhost."; \
+		echo "       See docs/deployment.md -> 'Sharing the server with another app'."; \
+		exit 1; \
+	fi
 	$(call deploy,production,$(DC_PROD),.env.prod,https://127.0.0.1/api/auth/csrf/,-k)
 	@$(MAKE) --no-print-directory prod-verify
 
