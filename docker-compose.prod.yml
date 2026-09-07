@@ -1,0 +1,57 @@
+# Production — tasky.tailwebs.com.
+#
+#   Cloudflare (proxied)  ->  Apache :443  ->  gunicorn :8000
+#
+# Only Apache is published. gunicorn is reachable solely on the compose network,
+# so nothing can bypass the proxy and forge X-Forwarded-Proto.
+services:
+  web:
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "0"          # no pytest/ruff in the production image
+    image: tasky-web:prod
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env.prod}
+    expose:
+      - "8000"
+    volumes:
+      - media:/app/media          # uploaded attachments must survive a redeploy
+      - static:/app/staticfiles
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/auth/csrf/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  proxy:
+    build:
+      context: ./deploy/apache
+    image: tasky-proxy:prod
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      TASKY_TLS: "on"
+      TASKY_SERVER_NAME: "tasky.tailwebs.com"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-write: the entrypoint writes a self-signed pair here on first boot
+      # if none exists. Drop a real Cloudflare Origin Certificate in to replace
+      # it and switch the zone to Full (strict).
+      - ./deploy/apache/certs:/usr/local/apache2/conf/certs
+      - static:/srv/static:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsSk", "https://127.0.0.1/api/auth/csrf/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  media:
+  static:

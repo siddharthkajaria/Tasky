@@ -1,0 +1,54 @@
+# Staging — identical to production except that TLS is off.
+#
+# It runs on a developer's Mac and is reached at http://localhost:8000, but it
+# uses the same production image (gunicorn, no test tooling), the same Apache
+# proxy, the same collectstatic step and DEBUG=0. TLS termination is the only
+# untested difference.
+services:
+  web:
+    build:
+      context: .
+      args:
+        INSTALL_DEV: "0"
+    image: tasky-web:stage
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env.stage}
+    expose:
+      - "8000"
+    volumes:
+      - media:/app/media
+      - static:/app/staticfiles
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/auth/csrf/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  proxy:
+    build:
+      context: ./deploy/apache
+    image: tasky-proxy:stage
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      TASKY_TLS: "off"            # no certificates anywhere in staging
+      TASKY_SERVER_NAME: "localhost"
+    ports:
+      - "8000:80"
+    volumes:
+      - static:/srv/static:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/auth/csrf/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  media:
+  static:

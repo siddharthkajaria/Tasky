@@ -58,6 +58,46 @@ ALLOWED_HOSTS = [
 ]
 
 
+def _env_flag(name, default="0"):
+    return os.environ.get(name, default) == "1"
+
+
+def _env_list(name, default=""):
+    return [v.strip() for v in os.environ.get(name, default).split(",") if v.strip()]
+
+
+# Django rejects an unsafe-method request whose Origin is not listed here. In
+# production the browser's Origin is https://tasky.tailwebs.com, which never
+# matches a bare ALLOWED_HOSTS entry, so this must be set independently.
+CSRF_TRUSTED_ORIGINS = _env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
+
+# Behind Apache behind Cloudflare, the request reaches Django over plain http.
+# Without this Django believes the connection is insecure and will refuse to
+# set Secure cookies (and SECURE_SSL_REDIRECT would loop forever).
+#
+# Only trust the header when the deployment actually terminates TLS upstream —
+# if Django were ever exposed directly, a client could forge the header and
+# claim https on a plaintext connection.
+if _env_flag("DJANGO_BEHIND_PROXY"):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
+
+# Cookies default to secure whenever DEBUG is off, so forgetting the flag fails
+# closed rather than shipping session cookies over plaintext.
+SESSION_COOKIE_SECURE = _env_flag("DJANGO_SECURE_COOKIES", "0" if DEBUG else "1")
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+SECURE_SSL_REDIRECT = _env_flag("DJANGO_SECURE_SSL_REDIRECT")
+SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
+SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -201,5 +241,7 @@ REST_FRAMEWORK = {
     ],
 }
 
-# The React app must read this cookie to send the CSRF header, so it cannot be HttpOnly.
+# ui/static/js/api.js reads this cookie to send the X-CSRFToken header, so it
+# cannot be HttpOnly. The token is not a secret; the SameSite policy above is
+# what stops a cross-site page from using it.
 CSRF_COOKIE_HTTPONLY = False

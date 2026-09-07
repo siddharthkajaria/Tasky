@@ -1,0 +1,7 @@
+# Test and lint tooling. Installed only when the image is built with
+# INSTALL_DEV=1 (see Dockerfile and docker-compose.yml).
+-r requirements.txt
+pytest>=8.3,<9.0
+pytest-django>=4.9,<5.0
+pytest-cov>=6.0,<7.0
+ruff>=0.8,<1.0

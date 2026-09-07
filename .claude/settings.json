@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && for f in $CLAUDE_FILE_PATHS; do case \"$f\" in *.py) python3 -m ruff check \"$f\" --quiet;; esac; done || true"
+          }
+        ]
+      }
+    ]
+  }
+}

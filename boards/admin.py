@@ -1,6 +1,17 @@
 from django.contrib import admin
 
-from .models import Board, Comment, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemFieldValue, WorkItemStatus
+from .models import (
+    Board,
+    Comment,
+    CustomField,
+    FieldOption,
+    ProjectScreenAssignment,
+    Screen,
+    ScreenField,
+    WorkItem,
+    WorkItemFieldValue,
+    WorkItemStatus,
+)
 
 
 @admin.register(Board)

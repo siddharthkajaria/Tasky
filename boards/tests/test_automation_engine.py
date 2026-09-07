@@ -1,4 +1,5 @@
 import pytest
+from django.db import IntegrityError
 
 from boards.automation import action_config_error, trigger_filter_error
 from boards.models import AutomationRule, Board, Label, WorkItem, WorkItemStatus
@@ -255,7 +256,7 @@ def test_create_path_rolls_back_all_automation_on_a_later_rule_failure(auth_clie
         # which _to_status_id now treats as a no-op).
         action_config={"status_id": 999999999},
     )
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         auth_client.post(
             "/api/work-items/",
             {"board": board.id, "item_type": "task", "title": "Item"},

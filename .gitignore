@@ -6,21 +6,52 @@ venv/
 
 # Django
 *.sqlite3
+# collectstatic output — built, never committed
 staticfiles/
+# uploaded attachments — user data, never committed
 media/
 
-# Node / React
-node_modules/
-dist/
-.vite/
+# Test and coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
 
-# Environment — never commit real credentials
+# Environment — never commit real credentials.
+# Templates live in docs/.env.*.example instead.
 .env
 .env.*
-!.env.example
+# ...but the templates in docs/ must be committed.
+!docs/.env.*.example
+
+# TLS material for the production origin. Cloudflare Origin Certificate —
+# see deploy/apache/certs/README.md for how to regenerate.
+deploy/apache/certs/*.pem
+deploy/apache/certs/*.key
+deploy/apache/certs/*.crt
+
+# Database dumps from `make prod-backup` — production data.
+backups/
+
+# Per-developer machine state written by /project-setup. The committed
+# counterpart is .claude/tailwebs-profile.json, which SHOULD be tracked.
+.claude/.tailwebs-setup.json
+# Per-developer Claude Code overrides.
+.claude/settings.local.json
+
+# Logs
+logs/
+*.log
+
+# Scratch from the build process — local only.
+.superpowers/
 
 # OS / editor
 .DS_Store
 .idea/
-.vscode/
+.vscode/*
+# ...except the Live Server config, which the UI workflow depends on.
+!.vscode/settings.json
 

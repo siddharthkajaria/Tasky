@@ -11,7 +11,7 @@ because every environment it is meant for is a throwaway local/dev database.
 import datetime
 
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
 from boards.models import Board, WorkItem
@@ -19,6 +19,20 @@ from boards.services import seed_default_statuses
 from projects.models import Project, ProjectMembership
 
 DEMO_PASSWORD = "password"
+
+# Hosts a throwaway development database can plausibly live on. Anything else —
+# an RDS endpoint above all — is refused outright. Until .env.stage/.env.prod
+# existed, "never run this against production" was only a warning in the
+# docstring; now that a single ENV_FILE typo would reach RDS, it is enforced.
+LOCAL_DB_HOSTS = {
+    "",
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "host.docker.internal",
+    "db",
+    "mysql",
+}
 
 PEOPLE = [
     ("asha", "Asha", "Rao"),
@@ -52,8 +66,26 @@ class Command(BaseCommand):
         "production database."
     )
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help=(
+                "Seed even though the database host does not look local. "
+                "Never use this against staging or production."
+            ),
+        )
+
     def handle(self, *args, **options):
         db = connection.settings_dict
+        host = (db.get("HOST") or "").strip().lower()
+        if host not in LOCAL_DB_HOSTS and not options["force"]:
+            raise CommandError(
+                f"Refusing to seed: database host {host!r} does not look like a "
+                "local development database. seed_demo creates accounts with a "
+                "password committed to this repository. If this really is a "
+                "throwaway database, re-run with --force."
+            )
         self.stdout.write(
             self.style.WARNING(
                 "seed_demo: about to write demo data (including accounts with "

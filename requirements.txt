@@ -1,6 +1,6 @@
+# Runtime dependencies only. Anything needed solely to run tests or lint goes in
+# requirements-dev.txt so it never ships in the production image.
 Django>=5.2,<6.0
 djangorestframework>=3.16,<4.0
 mysqlclient>=2.2,<3.0
 gunicorn>=23.0,<24.0
-pytest>=8.3,<9.0
-pytest-django>=4.9,<5.0

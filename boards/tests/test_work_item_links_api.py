@@ -63,7 +63,7 @@ def test_duplicate_link_is_rejected_regardless_of_order(auth_client, item_a, ite
 
 @pytest.mark.django_db
 def test_linking_a_parent_and_child_is_rejected(auth_client, board, item_a):
-    child = WorkItem.objects.create(board=board, title="Child", item_type="story", parent=None)
+    WorkItem.objects.create(board=board, title="Child", item_type="story", parent=None)
     # item_a is a plain task; make item_a the parent of an epic-shaped chain isn't valid,
     # so build a real parent/child pair directly instead:
     epic = WorkItem.objects.create(board=board, title="Epic", item_type="epic")

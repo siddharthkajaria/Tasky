@@ -1,7 +1,7 @@
 import pytest
 
-from boards.services import PROJECT_TEMPLATES, STATUS_PRESETS, seed_default_statuses
 from boards.models import WorkItemStatus
+from boards.services import PROJECT_TEMPLATES, STATUS_PRESETS, seed_default_statuses
 from projects.models import Project
 
 

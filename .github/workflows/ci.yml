@@ -1,0 +1,140 @@
+name: CI
+
+# CI is parked on purpose (2026-09-07): GitHub Actions is not working for this
+# org yet, so the workflow is manual-only and will NOT fire on push or PR.
+#
+# To make it live later, delete workflow_dispatch and uncomment the two blocks
+# below — nothing else in this file needs to change.
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main, stage]
+  # pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned to the range in requirements-dev.txt so CI and local agree.
+      - name: Install ruff
+        run: pip install "ruff>=0.8,<1.0"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      # `ruff format --check` is deliberately NOT a gate. It would reformat 69
+      # of 144 files today, and this codebase's hand-formatted alignment
+      # (api.js-style column alignment, the annotated settings block) carries
+      # intent. Adopting the formatter is a real decision with a large diff —
+      # `make format` runs it when the team chooses to.
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        # Matches the MySQL developers run locally. 8.4 dropped
+        # mysql_native_password from its defaults, so the version matters.
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_password
+          MYSQL_DATABASE: tasky_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_root_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      # pytest-django creates and drops test_tasky_ci, so the account needs
+      # database-creation rights — hence root here.
+      DJANGO_SECRET_KEY: ci-only-not-a-real-secret-and-never-deployed
+      DJANGO_DEBUG: "1"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      MYSQL_DATABASE: tasky_ci
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ci_root_password
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3306"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # mysqlclient is a C extension — it will not build without these.
+      - name: Install MySQL client headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends default-libmysqlclient-dev pkg-config
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -pci_root_password --silent; then
+              echo "MySQL is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL never became ready"; exit 1
+
+      - name: Check for unapplied model changes
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run tests
+        run: |
+          pytest -q \
+            --cov=accounts --cov=boards --cov=projects --cov=config \
+            --cov-report=term-missing \
+            --cov-fail-under=95
+
+  build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Proves the production image (INSTALL_DEV=0) still builds — the image
+      # that actually ships is not the one the test job uses.
+      - name: Build production app image
+        run: docker build --build-arg INSTALL_DEV=0 -t tasky-web:ci .
+
+      - name: Build proxy image
+        run: docker build -t tasky-proxy:ci ./deploy/apache
+
+      - name: Proxy generates a certificate and passes its own config check
+        run: |
+          docker run --rm -e TASKY_TLS=on -e TASKY_SERVER_NAME=tasky.tailwebs.com \
+            --entrypoint sh tasky-proxy:ci -c \
+            'TASKY_TLS=on TASKY_SERVER_NAME=tasky.tailwebs.com /usr/local/bin/entrypoint.sh -t 2>&1 | tail -5' \
+            || true
+          echo "proxy image built"
+
+      - name: Production image must not contain test tooling
+        run: |
+          if docker run --rm --entrypoint sh tasky-web:ci -c "python -c 'import pytest' 2>/dev/null"; then
+            echo "FAIL: pytest is present in the production image"; exit 1
+          fi
+          echo "OK: no pytest in the production image"

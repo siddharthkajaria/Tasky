@@ -1,6 +1,15 @@
 import pytest
 
-from boards.models import Board, CustomField, FieldOption, ProjectScreenAssignment, Screen, ScreenField, WorkItem, WorkItemFieldValue
+from boards.models import (
+    Board,
+    CustomField,
+    FieldOption,
+    ProjectScreenAssignment,
+    Screen,
+    ScreenField,
+    WorkItem,
+    WorkItemFieldValue,
+)
 
 
 @pytest.fixture

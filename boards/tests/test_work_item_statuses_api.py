@@ -74,7 +74,7 @@ def test_a_plain_member_cannot_add_a_status(auth_client, project):
 
 @pytest.mark.django_db
 def test_duplicate_status_name_in_the_same_project_is_rejected(auth_client, project):
-    statuses = seed_default_statuses(project)
+    seed_default_statuses(project)
     response = auth_client.post(
         f"/api/projects/{project.id}/statuses/",
         {"name": "to do", "category": "todo"},
@@ -113,7 +113,7 @@ def test_recategorizing_a_status_is_rejected_if_it_would_empty_a_category(auth_c
 @pytest.mark.django_db
 def test_recategorizing_a_status_succeeds_when_another_remains_in_its_old_category(auth_client, project):
     statuses = seed_default_statuses(project)
-    extra = WorkItemStatus.objects.create(project=project, name="Also Done", category="done", position=3)
+    WorkItemStatus.objects.create(project=project, name="Also Done", category="done", position=3)
 
     response = auth_client.patch(
         f"/api/projects/{project.id}/statuses/{statuses['done'].id}/",
@@ -154,7 +154,7 @@ def test_reordering_with_a_non_numeric_position_is_rejected(auth_client, project
 
 @pytest.mark.django_db
 def test_deleting_an_unused_status_succeeds(auth_client, project):
-    statuses = seed_default_statuses(project)
+    seed_default_statuses(project)
     extra = WorkItemStatus.objects.create(project=project, name="Blocked", category="in_progress", position=3)
 
     response = auth_client.delete(f"/api/projects/{project.id}/statuses/{extra.id}/")

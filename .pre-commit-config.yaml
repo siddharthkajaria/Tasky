@@ -1,0 +1,28 @@
+# Optional local enforcement. CI (.github/workflows/ci.yml) is the authority —
+# these hooks just catch things before you push.
+#
+# Install with pipx, NOT pip, so it never lands in requirements or an image:
+#   pipx install pre-commit && pre-commit install
+#
+# Note: ruff-format is deliberately absent. Running it would reformat 69 of 144
+# files; adopting the formatter is a separate decision (see `make format`).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.2
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: detect-private-key      # would have caught deploy/apache/certs/*.key
+      - id: check-yaml
+      - id: check-toml
+      - id: debug-statements
+      - id: check-ast
