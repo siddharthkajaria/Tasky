@@ -1,0 +1,37 @@
+# Ruff is the only linter/formatter here. Mypy is deliberately NOT configured:
+# this codebase has no type annotations, so turning it on would produce
+# thousands of findings and a permanently red gate. Adding types is a real
+# piece of work, tracked in docs/follow-ups.md — not something to fake with a
+# permissive config.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# Migrations are generated; formatting them creates noise and merge conflicts.
+exclude = ["*/migrations/*", ".venv", "__pycache__", "staticfiles"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C90", # mccabe complexity
+]
+ignore = [
+    "E501",  # line length — the formatter owns this
+    "B008",  # function calls in argument defaults — idiomatic in DRF
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["accounts", "boards", "projects", "config"]
+
+[tool.ruff.lint.mccabe]
+# boards/services.py and boards/views.py carry genuinely branchy validation.
+max-complexity = 15
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
