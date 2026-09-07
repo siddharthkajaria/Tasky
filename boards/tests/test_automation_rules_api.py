@@ -152,8 +152,8 @@ def test_status_changed_filter_rejects_setting_both_to_status_and_to_category(au
 def test_trigger_filter_referencing_a_foreign_project_status_is_rejected(auth_client, project, other_user):
     other_project = Project.objects.create(key="OTHR", name="Other")
     ProjectMembership.objects.create(project=other_project, user=other_user, role="owner")
-    from boards.services import seed_default_statuses
     from boards.models import WorkItemStatus
+    from boards.services import seed_default_statuses
 
     seed_default_statuses(other_project)
     foreign_status = WorkItemStatus.objects.filter(project=other_project).first()
@@ -175,8 +175,8 @@ def test_trigger_filter_referencing_a_foreign_project_status_is_rejected(auth_cl
 def test_action_config_referencing_a_foreign_project_status_is_rejected(auth_client, project, other_user):
     other_project = Project.objects.create(key="OTHR2", name="Other 2")
     ProjectMembership.objects.create(project=other_project, user=other_user, role="owner")
-    from boards.services import seed_default_statuses
     from boards.models import WorkItemStatus
+    from boards.services import seed_default_statuses
 
     seed_default_statuses(other_project)
     foreign_status = WorkItemStatus.objects.filter(project=other_project).first()
@@ -229,7 +229,7 @@ def test_deleting_a_status_referenced_by_a_rule_is_rejected(auth_client, project
         action_type=AutomationRule.ActionType.CHANGE_STATUS,
         action_config={"status_id": statuses["todo"].id}, position=0,
     )
-    from boards.models import WorkItem, Board
+    from boards.models import Board, WorkItem
 
     board = Board.objects.create(name="B", created_by=None, project=project)
     # Attached to `done`, not `todo` — this just proves the project isn't

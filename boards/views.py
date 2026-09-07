@@ -14,7 +14,25 @@ from rest_framework.views import APIView
 from projects.models import ProjectMembership
 from projects.permissions import IsProjectMember
 
-from .models import Attachment, AutomationRule, Board, Comment, Component, CustomField, FieldOption, Label, ProjectScreenAssignment, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
+from .automation import action_config_error, trigger_filter_error
+from .models import (
+    Attachment,
+    AutomationRule,
+    Board,
+    Comment,
+    Component,
+    CustomField,
+    FieldOption,
+    Label,
+    ProjectScreenAssignment,
+    Release,
+    Screen,
+    ScreenField,
+    Sprint,
+    WorkItem,
+    WorkItemLink,
+    WorkItemStatus,
+)
 from .serializers import (
     AttachmentSerializer,
     AutomationRuleSerializer,
@@ -32,18 +50,24 @@ from .serializers import (
     SprintSerializer,
     WorkItemLinkSerializer,
     WorkItemSerializer,
-    WorkItemSummarySerializer,
     WorkItemStatusSerializer,
+    WorkItemSummarySerializer,
     can_manage_automation,
     can_manage_components,
     can_manage_releases,
+    can_manage_screen_assignments,
     can_manage_sprints,
     can_manage_statuses,
-    can_manage_screen_assignments,
     user_can_manage_definitions,
 )
-from .automation import action_config_error, trigger_filter_error
-from .services import import_work_items_from_csv, move_work_item, next_backlog_position, next_position, resolve_labels, schedule_work_item
+from .services import (
+    import_work_items_from_csv,
+    move_work_item,
+    next_backlog_position,
+    next_position,
+    resolve_labels,
+    schedule_work_item,
+)
 
 
 class BoardViewSet(viewsets.ModelViewSet):
@@ -229,7 +253,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             # exception handler on its own (only django.http.Http404 and
             # PermissionDenied are) — it has to be translated explicitly, or
             # this would surface as a 500.
-            raise Http404("Work item was deleted before the move could be applied.")
+            raise Http404("Work item was deleted before the move could be applied.") from None
         item.refresh_from_db()
         return Response(WorkItemSerializer(item).data)
 
@@ -244,7 +268,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             try:
                 new_sprint_id = int(raw_sprint)
             except (TypeError, ValueError):
-                raise ValidationError({"sprint": "Must be an integer or null."})
+                raise ValidationError({"sprint": "Must be an integer or null."}) from None
             sprint = Sprint.objects.filter(pk=new_sprint_id).first()
             if not sprint or sprint.board_id != item.board_id:
                 raise ValidationError({"sprint": "Sprint must belong to this item's board."})
@@ -262,12 +286,12 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             try:
                 position = int(raw_position)
             except (TypeError, ValueError):
-                raise ValidationError({"position": "Must be an integer."})
+                raise ValidationError({"position": "Must be an integer."}) from None
 
         try:
             schedule_work_item(item, new_sprint_id, position)
         except WorkItem.DoesNotExist:
-            raise Http404
+            raise Http404 from None
         item.refresh_from_db()
         return Response(WorkItemSerializer(item).data)
 
@@ -293,7 +317,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         try:
             ids = [int(i) for i in raw_ids]
         except (TypeError, ValueError):
-            raise ValidationError({"ids": "Every id must be an integer."})
+            raise ValidationError({"ids": "Every id must be an integer."}) from None
 
         by_id = {
             item.id: item
@@ -323,7 +347,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         try:
             status_id = int(status_id)
         except (TypeError, ValueError):
-            raise ValidationError({"status": "Must be an integer."})
+            raise ValidationError({"status": "Must be an integer."}) from None
 
         target_status = WorkItemStatus.objects.filter(pk=status_id).first()
         if not target_status or target_status.project_id != project.id:
@@ -346,7 +370,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         return Response({"succeeded": succeeded, "failed": failed})
 
     @action(detail=False, methods=["post"], url_path="bulk-update")
-    def bulk_update(self, request):
+    def bulk_update(self, request):  # noqa: C901 — one branch per bulk-editable field
         data = request.data
         items, missing_ids, project = self._resolve_batch(data.get("ids"))
 
@@ -357,7 +381,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             try:
                 assignee_id = int(data["assignee"])
             except (TypeError, ValueError):
-                raise ValidationError({"assignee": "Must be an integer."})
+                raise ValidationError({"assignee": "Must be an integer."}) from None
 
             assignee = User.objects.filter(pk=assignee_id).first()
             if not assignee:
@@ -368,7 +392,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             try:
                 priority = int(priority)
             except (TypeError, ValueError):
-                raise ValidationError({"priority": "Must be 1, 2, or 3."})
+                raise ValidationError({"priority": "Must be 1, 2, or 3."}) from None
             if priority not in (1, 2, 3):
                 raise ValidationError({"priority": "Must be 1, 2, or 3."})
 
@@ -377,7 +401,7 @@ class WorkItemViewSet(viewsets.ModelViewSet):
             try:
                 component_ids = [int(i) for i in data["components_add"]]
             except (TypeError, ValueError):
-                raise ValidationError({"components_add": "Every id must be an integer."})
+                raise ValidationError({"components_add": "Every id must be an integer."}) from None
             components_add = list(Component.objects.filter(id__in=component_ids))
             found_component_ids = {c.id for c in components_add}
             if any(i not in found_component_ids for i in component_ids):
@@ -768,7 +792,7 @@ class WorkItemStatusViewSet(viewsets.ModelViewSet):
         try:
             target = max(0, int(self.request.data["position"]))
         except (TypeError, ValueError):
-            raise ValidationError({"position": "Must be a whole number."})
+            raise ValidationError({"position": "Must be a whole number."}) from None
         siblings = list(
             WorkItemStatus.objects.filter(project=instance.project)
             .exclude(pk=instance.pk)
@@ -893,7 +917,7 @@ class AutomationRuleViewSet(viewsets.ModelViewSet):
         try:
             target = max(0, int(self.request.data["position"]))
         except (TypeError, ValueError):
-            raise ValidationError({"position": "Must be a whole number."})
+            raise ValidationError({"position": "Must be a whole number."}) from None
         siblings = list(
             AutomationRule.objects.filter(project=instance.project)
             .exclude(pk=instance.pk)
@@ -1087,7 +1111,7 @@ class ProjectScreenAssignmentsView(APIView):
 class SearchView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
+    def get(self, request):  # noqa: C901 — each facet is an independent optional filter
         params = request.query_params
         q = (params.get("q") or "").strip()
         facet_keys = ["item_type", "status_category", "priority", "assignee", "component", "label", "project"]
@@ -1175,7 +1199,7 @@ class SearchView(APIView):
         try:
             return int(value)
         except (TypeError, ValueError):
-            raise ValidationError({field_name: "Must be an integer."})
+            raise ValidationError({field_name: "Must be an integer."}) from None
 
 
 class CustomFieldViewSet(viewsets.ModelViewSet):
@@ -1271,7 +1295,7 @@ class FieldOptionViewSet(viewsets.ModelViewSet):
         try:
             target = max(0, int(self.request.data["position"]))
         except (TypeError, ValueError):
-            raise ValidationError({"position": "Must be a whole number."})
+            raise ValidationError({"position": "Must be a whole number."}) from None
         siblings = list(FieldOption.objects.filter(field=instance.field).exclude(pk=instance.pk).order_by("position", "id"))
         target = min(target, len(siblings))
         siblings.insert(target, instance)
@@ -1384,7 +1408,7 @@ class ScreenFieldViewSet(viewsets.ModelViewSet):
         try:
             target = max(0, int(self.request.data["position"]))
         except (TypeError, ValueError):
-            raise ValidationError({"position": "Must be a whole number."})
+            raise ValidationError({"position": "Must be a whole number."}) from None
         siblings = list(
             ScreenField.objects.filter(screen=instance.screen).exclude(pk=instance.pk).order_by("position", "id")
         )

@@ -3,8 +3,31 @@ from rest_framework import serializers
 
 from accounts.serializers import UserSerializer
 
-from .models import Attachment, AutomationRule, Board, Comment, Component, CustomField, FieldOption, Label, Release, Screen, ScreenField, Sprint, WorkItem, WorkItemLink, WorkItemStatus
-from .services import LABEL_PALETTE, apply_custom_fields, custom_fields_read_map, custom_fields_write_error, next_backlog_position, resolve_default_status, resolve_labels
+from .models import (
+    Attachment,
+    AutomationRule,
+    Board,
+    Comment,
+    Component,
+    CustomField,
+    FieldOption,
+    Label,
+    Release,
+    Screen,
+    ScreenField,
+    Sprint,
+    WorkItem,
+    WorkItemLink,
+    WorkItemStatus,
+)
+from .services import (
+    LABEL_PALETTE,
+    apply_custom_fields,
+    custom_fields_read_map,
+    custom_fields_write_error,
+    resolve_default_status,
+    resolve_labels,
+)
 
 VALID_PARENT_TYPES = {
     WorkItem.ItemType.EPIC: [],
@@ -309,7 +332,7 @@ class WorkItemSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("You must be a member of this board's project.")
         return value
 
-    def validate(self, attrs):
+    def validate(self, attrs):  # noqa: C901 — one validator per writable field; splitting it would scatter the rules
         is_create = self.instance is None
         parent_touched = is_create or "parent" in attrs
 

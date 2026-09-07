@@ -225,7 +225,7 @@ def test_schedule_on_a_nonexistent_sprint_id_returns_400(auth_client, board, sta
 def test_status_and_sprint_never_constrain_each_other(auth_client, board, project):
     seed_default_statuses(project)
     done_status = WorkItemStatus.objects.filter(project=project, category="done").first()
-    sprint = Sprint.objects.create(board=board, name="S", created_by=None, state="active")
+    Sprint.objects.create(board=board, name="S", created_by=None, state="active")
     item = WorkItem.objects.create(board=board, title="X", status=done_status, created_by=None)
     response = auth_client.post(
         f"/api/work-items/{item.id}/schedule/", {"sprint": None}, content_type="application/json"

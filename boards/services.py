@@ -11,7 +11,16 @@ from django.db.utils import DataError
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Component, CustomField, Label, ProjectScreenAssignment, ScreenField, Sprint, WorkItem, WorkItemFieldValue, WorkItemStatus
+from .models import (
+    Component,
+    CustomField,
+    Label,
+    ProjectScreenAssignment,
+    ScreenField,
+    WorkItem,
+    WorkItemFieldValue,
+    WorkItemStatus,
+)
 
 # Derived from WorkItem.Priority.choices (LOW = 1, "Low" / MEDIUM = 2,
 # "Medium" / HIGH = 3, "High") rather than hand-duplicated, so this can't
@@ -19,7 +28,7 @@ from .models import Component, CustomField, Label, ProjectScreenAssignment, Scre
 PRIORITY_NAMES = {label.lower(): value for value, label in WorkItem.Priority.choices}
 
 
-def import_work_items_from_csv(board, csv_file, user):
+def import_work_items_from_csv(board, csv_file, user):  # noqa: C901 — per-row validation is a flat chain of independent checks, deliberately readable top-to-bottom
     """Row-by-row, best-effort: a bad row is skipped and reported, the
     rest of the file still imports. A uniform problem (missing `title`
     header, more than 500 rows) is a whole-file ValidationError instead,
@@ -33,7 +42,7 @@ def import_work_items_from_csv(board, csv_file, user):
         # A no-op for files without a BOM, so this is a strict improvement.
         text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw
     except UnicodeDecodeError:
-        raise ValidationError({"csv": "CSV file must be UTF-8 encoded."})
+        raise ValidationError({"csv": "CSV file must be UTF-8 encoded."}) from None
     # No blanket "drop any all-blank row" pass here: `csv.reader` already
     # yields zero rows for a genuinely empty file (`if not reader` below
     # catches that), and a row that's blank because ITS title is blank is
@@ -69,7 +78,7 @@ def import_work_items_from_csv(board, csv_file, user):
         row = {h: (cells[idx].strip() if idx < len(cells) else "") for idx, h in enumerate(header)}
         title = row.get("title", "")
 
-        def fail_row(error, title=title):
+        def fail_row(error, row_num=row_num, title=title):
             failed.append({"row": row_num, "title": title or None, "error": error})
 
         if not title:

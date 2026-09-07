@@ -77,7 +77,7 @@ def test_owner_can_rename_a_sprint_and_set_its_goal(auth_client, board):
 @pytest.mark.django_db
 def test_patch_cannot_change_state_directly(auth_client, board):
     sprint = Sprint.objects.create(board=board, name="X", created_by=None)
-    response = auth_client.patch(
+    auth_client.patch(
         f"/api/sprints/{sprint.id}/", {"state": "active"}, content_type="application/json"
     )
     sprint.refresh_from_db()
@@ -96,7 +96,7 @@ def test_start_moves_a_planned_sprint_to_active_and_stamps_start_date(auth_clien
 
 @pytest.mark.django_db
 def test_starting_a_second_sprint_while_one_is_active_is_rejected(auth_client, board):
-    first = Sprint.objects.create(board=board, name="First", created_by=None, state="active")
+    Sprint.objects.create(board=board, name="First", created_by=None, state="active")
     second = Sprint.objects.create(board=board, name="Second", created_by=None)
     response = auth_client.post(f"/api/sprints/{second.id}/start/")
     assert response.status_code == 400
