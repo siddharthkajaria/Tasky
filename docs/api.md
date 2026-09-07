@@ -6,8 +6,10 @@ Session-cookie auth, same origin. Every endpoint needs a signed-in session excep
 **An unauthenticated call to any other endpoint returns `403`, not `401`.** DRF's
 `SessionAuthentication` treats "no session" as "not permitted" rather than "please
 authenticate" (there's no `WWW-Authenticate` challenge to issue for a cookie-based
-scheme), so `IsAuthenticated` rejects it with 403. The React error interceptor needs
-to branch on 403-for-anonymous, not 401.
+scheme), so `IsAuthenticated` rejects it with 403. The client's error handling must
+branch on 403-for-anonymous, not 401 — see `ui/static/js/api.js`, which
+disambiguates a genuine permission denial from an expired session by re-checking
+`/api/auth/me/` with a raw `fetch`.
 
 Any unsafe request (POST, PATCH, DELETE) must carry an `X-CSRFToken` header whose value
 is the `csrftoken` cookie. Call `GET /api/auth/csrf/` once on app load to be handed one.

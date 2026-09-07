@@ -8,16 +8,24 @@ considered and consciously deferred. Recorded so the next two plans don't redisc
 | Item | Why |
 |---|---|
 | **Rotate the dev superuser** | `admin` / `admin-dev-12345` was created during development. It lives in the dev database only — never committed — but must not survive onto a shared box. |
-| **`seed_demo` creates known-password accounts** | The command now prints a warning naming its target database, but nothing technically prevents it running against a shared environment. Local use only. |
+| ~~**`seed_demo` creates known-password accounts**~~ | **Closed 2026-09-07.** The command now refuses any database host that does not look local, and names the host in the error. `--force` exists for a genuinely throwaway remote database. Two regression tests pin it. |
 
-## Deployment plan
+## Deployment plan — done (2026-09-07)
 
-- `DEBUG=0`, `CSRF_TRUSTED_ORIGINS`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`
-- `STATIC_ROOT` + `collectstatic` (absent by design — the React build lands in the UI plan)
-- gunicorn worker tuning, the Apache reverse-proxy config, RDS connection and security groups
-- Split `requirements.txt` so `pytest`/`pytest-django` don't ship in the production image
-- `SECRET_KEY` is now guarded: with `DEBUG=0` and no key in the environment (or an empty one),
-  the app refuses to start rather than silently using the committed development key.
+Everything in this section has shipped. Kept as a record of what was required.
+
+| Item | Where it landed |
+|---|---|
+| `DEBUG=0`, `CSRF_TRUSTED_ORIGINS`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE` | `config/settings.py`, driven by `.env.prod` |
+| `STATIC_ROOT` + `collectstatic` | run by `make deploy-prod`; Apache serves `/static/` directly |
+| gunicorn worker tuning | `Dockerfile` — 3 workers, 60s timeout |
+| Apache reverse-proxy config | `deploy/apache/`, behind Cloudflare |
+| RDS connection | `.env.stage` / `.env.prod` |
+| Split `requirements.txt` so `pytest` doesn't ship in the production image | `requirements-dev.txt` + the `INSTALL_DEV` build arg |
+| `SECRET_KEY` guard | already in `config/settings.py` — with `DEBUG=0` and no key the app refuses to start rather than silently using the committed development key |
+
+Still outstanding: **security groups** on RDS, and the DNS record for
+`tasky.tailwebs.com`.
 
 ## Security items judged low-risk for an internal tool
 
@@ -251,5 +259,12 @@ work-item read path) finding from that review was fixed before merge; these are 
 
 ## Local development note
 
-This machine's `.env` uses `MYSQL_PORT=3307` because a second MySQL occupies 3306. `.env.example`
-keeps the conventional 3306 — adjust per machine.
+Machine setup is per-developer and belongs in
+`.claude/memory/project-tasky-dev-setup.md`, not here — an earlier version of
+this note hard-coded one machine's port 3307 and Colima, and both were wrong for
+the next machine.
+
+The two that bite everywhere: `MYSQL_HOST` must be `host.docker.internal` (inside
+the container `localhost` is the container), and MySQL 8.4 no longer loads
+`mysql_native_password`, so an account created with it fails with
+`ERROR 1524`.

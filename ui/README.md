@@ -14,9 +14,12 @@ docker compose up
 Then open http://localhost:8000 and sign in. Local accounts come from:
 
 ```bash
-docker compose run --rm web python manage.py seed_demo
-# users: asha / kabir / lena   password: password
+make createsuperuser        # then create teammates in Django admin at /admin/
 ```
+
+Demo data is **not** seeded — see `../docs/dev-credentials.md`. `seed_demo`
+still exists but now refuses any database that does not look local, because it
+creates accounts with a password committed to this repository.
 
 ## Run it from VS Code's "Go Live"
 
@@ -62,11 +65,11 @@ browser's `Origin` and the proxied host, and sign-in fails. Going straight to
 Django keeps it genuinely same-origin.
 
 ⚠️ **This is a development server.** `DEBUG=1` shows tracebacks to anyone who
-triggers an error, the `seed_demo` accounts share a password committed to this
-repo, and the `admin` superuser has never been rotated (see
+triggers an error, and the `admin` superuser has never been rotated (see
 `../docs/follow-ups.md`). Fine for showing a colleague across the desk; not
 something to leave running on a network you do not control, and not a substitute
-for deploying properly.
+for deploying properly — `make deploy-stage` runs the real gunicorn/Apache stack
+if you want a faithful preview.
 
 ## Run it without a database
 
@@ -129,9 +132,23 @@ one of them too, so mock mode stays an honest model rather than a picture:
   the client groups them
 - Card positions are not contiguous, and gaps are never treated as corruption
 
-## Not built yet
+## Not built *here* — but built on the server
 
-Search, labels, attachments, notifications, activity history, subtasks,
-per-board permissions and password reset are all out of scope for v1 — see
-`../docs/superpowers/specs/2026-07-29-team-kanban-design.md`. Teammates' changes
-appear on refresh; there is no realtime.
+This is the important gap, and it is not the same as "out of scope". The backend
+has shipped sub-projects 1–11 with passing tests, and the signed-off prototype in
+`../design/` covers all of them. **This directory covers 6 screens of 11.**
+
+Reachable only in `../design/`, never in production:
+
+custom fields and screens · labels · cross-project search · sprints and backlog ·
+releases · attachments · site admin · project templates · automation ·
+bulk operations · CSV import · project archiving · status management (this UI
+*reads* per-project statuses but cannot edit them)
+
+`static/js/api.js` is the honest measure — it defines no client method for any of
+those endpoints. Wiring them up is Phase 2 work on an already-approved design, so
+it is not behind the design gate.
+
+Genuinely not built anywhere: notifications and reporting (sub-projects 12 and
+13, spec-only), activity history, per-board permissions, and password reset.
+Teammates' changes appear on refresh; there is no realtime.

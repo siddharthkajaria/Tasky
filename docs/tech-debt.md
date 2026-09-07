@@ -20,19 +20,25 @@ is 1,464.
 
 ## 2. Documentation drift, now corrected
 
-Fixed on 2026-09-07, recorded because the same drift will recur:
+Fixed on 2026-09-07. Recorded because the same drift will recur, and because the
+shape of it is worth recognising: every one of these files was accurate when
+written and silently rotted as the backend moved on.
 
 - `README.md` claimed the UI was React and not yet built.
-- `docs/handover.md` said the repo had never been pushed; it has a GitHub remote
-  and 152 commits on `main`.
-- `docs/project-status.md` said 260 tests (actual 554) and listed Workflows,
-  Labels, Search, Sprints, Releases, Attachments, Permissions, Project Types and
-  Automation as unbuilt. All nine had shipped.
+- `docs/handover.md` said the repo had never been pushed and the backend branch
+  was unmerged; it has a GitHub remote and 152 commits on `main`. It also
+  reported 92 tests against an actual 556. **Deleted.**
+- `docs/project-status.md` said 260 tests and listed Workflows, Labels, Search,
+  Sprints, Releases, Attachments, Permissions, Project Types and Automation as
+  unbuilt. All nine had shipped. **Deleted.**
 - `CLAUDE.md`, `README.md` and `docs/handover.md` all said Docker here is Colima
   on port 3307. This machine runs Docker Desktop and MySQL on 3306.
 
-`docs/project-status.md` is **still untracked and still stale** — it is the file
-that produced most of the above. Either delete it or fold it into `README.md`.
+Both status-style documents were removed rather than corrected. They duplicated
+what `README.md` and `design/README.md` already state, and a second place to
+record status is exactly what let the first one drift. **`design/README.md` is
+the sub-project register; `README.md` carries overall status.** Do not
+reintroduce a third.
 
 ## 3. Security gaps that are real
 
