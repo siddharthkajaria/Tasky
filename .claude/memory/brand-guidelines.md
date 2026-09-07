@@ -97,9 +97,30 @@ row of coloured dots does not. This is the most distinctive thing about the UI.
 
 ## Logos and icons
 
-**There are no image assets.** The brand mark is the `.brand` CSS class — type,
-not a file. No `favicon.ico`, no logo PNG/SVG anywhere in the repo. Confirmed
-2026-09-07; the user has deferred any logo work.
+The in-app brand mark is still the `.brand` CSS class — type, not a file. There
+is no Tasky logo image; the user has deferred that.
+
+The **favicon** is the Tailwebs corporate mark (white "tw" on red), taken from
+tailwebs.com on 2026-09-07:
+
+| File | Used as |
+|---|---|
+| `ui/static/img/favicon-150.png` | 32×32 icon, and the `/favicon.ico` redirect target |
+| `ui/static/img/favicon-300.png` | 192×192 icon and `apple-touch-icon` |
+| `design/img/favicon-*.png` | the prototype's own copies |
+
+`design/` keeps duplicates on purpose: it is opened straight from the filesystem
+with no server, so it cannot reach `ui/static/`.
+
+Its red is `#E12B34`, near-identical to this app's `--accent` `#E4362C`. Close
+enough that the two never look like different reds side by side — worth
+preserving if the icon is ever re-cut.
+
+`config/urls.py` redirects `/favicon.ico` to the 150px file, above the SPA
+catch-all. Browsers request that path regardless of the `<link rel="icon">`
+tags — `/admin/` especially, which renders no template of ours — and without the
+route the catch-all would answer with the SPA shell, handing the browser HTML
+where it asked for an image.
 
 ## Email vs web
 
