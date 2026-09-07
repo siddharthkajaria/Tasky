@@ -85,7 +85,7 @@ curl -sI -H 'Host: tasky.tailwebs.com' http://127.0.0.1:8081/ | head -1
 **The vhosts are committed at [`deploy/apache-host/`](../deploy/apache-host/)** — copy them, do not retype them:
 
 ```bash
-sudo a2enmod proxy proxy_http headers
+sudo a2enmod proxy proxy_http headers rewrite
 sudo cp deploy/apache-host/tasky.conf /etc/apache2/sites-available/tasky.conf
 sudo a2ensite tasky
 sudo apache2ctl configtest      # must pass — this Apache also serves efast-staging
@@ -205,6 +205,43 @@ is in the picture.
 `deploy/apache/certs/` on first boot if none exists — that is exactly what
 Cloudflare "Full" expects, since Full encrypts the origin hop without validating
 the certificate. `make prod-certs` shows what is being served.
+
+### Forcing https while Cloudflare stays on "Flexible"
+
+`deploy/apache-host/tasky.conf` already does this — no Cloudflare change needed.
+
+The trap is that a plain "redirect everything to https" **loops forever** under
+Flexible: Cloudflare always fetches this origin over http, so it answers its own
+redirect by fetching over http again. The connection scheme at the origin says
+nothing about how the visitor connected.
+
+Cloudflare does forward the visitor's real scheme in `X-Forwarded-Proto`, so the
+redirect keys on that and nothing else:
+
+```apache
+RewriteEngine On
+RewriteCond %{HTTP:X-Forwarded-Proto} =http
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+```
+
+It terminates because after one redirect the visitor is on https, Cloudflare
+sends `X-Forwarded-Proto: https`, and the condition stops matching. Verified
+through a two-proxy chain: http visitor → 301, https visitor → 200, exactly one
+redirect.
+
+This also means the vhost must **not** do `RequestHeader set X-Forwarded-Proto
+"https"`. Overwriting it with a constant is what makes the redirect impossible,
+because it destroys the only evidence of how the visitor connected. Apache
+passes Cloudflare's value through to Django, which reads it via
+`SECURE_PROXY_SSL_HEADER`.
+
+Needs `sudo a2enmod rewrite`.
+
+> **What this does not fix.** The visitor's leg is now encrypted, but
+> Cloudflare → origin is still plaintext across the public internet, because
+> that is what Flexible means. Only phase 2 encrypts that hop. Consider HSTS
+> (`DJANGO_HSTS_SECONDS`) only after that — a year-long header is very hard to
+> walk back.
 
 ### Optional phase 3 — "Full (strict)"
 
