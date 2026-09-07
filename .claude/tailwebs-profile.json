@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "archetype": "fullstack",
+  "phase_variants": {},
+  "overrides": {
+    "process_manager": "docker-compose",
+    "container_runtime": "docker-desktop",
+    "deploy": {
+      "method": "docker-compose",
+      "prod_branch": "main",
+      "stage_branch": "stage",
+      "prod_domain": "tasky.tailwebs.com",
+      "proxy": "apache-in-container",
+      "tls": "self-signed generated at container start; Cloudflare SSL mode Full",
+      "staging_runs_locally": true
+    },
+    "ci": "github-actions",
+    "lint": "ruff",
+    "format_enforced": false,
+    "typecheck": "none",
+    "coverage_floor": 95,
+    "coverage_actual": 98,
+    "test_count": 556,
+    "seed_data": "disabled by decision 2026-09-07"
+  },
+  "phases_completed": [1, 2, 3, 4, 5, 6, 7, 8, 9]
+}
