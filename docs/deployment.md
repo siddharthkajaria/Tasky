@@ -82,12 +82,17 @@ curl -sI -H 'Host: tasky.tailwebs.com' http://127.0.0.1:8081/ | head -1
 
 ### 2. Add the host Apache vhost
 
+**The vhosts are committed at [`deploy/apache-host/`](../deploy/apache-host/)** — copy them, do not retype them:
+
 ```bash
-sudo a2enmod proxy proxy_http headers ssl
-sudo nano /etc/apache2/sites-available/tasky.conf
+sudo a2enmod proxy proxy_http headers
+sudo cp deploy/apache-host/tasky.conf /etc/apache2/sites-available/tasky.conf
+sudo a2ensite tasky
+sudo apache2ctl configtest      # must pass — this Apache also serves efast-staging
+sudo systemctl reload apache2
 ```
 
-Phase 1 — HTTP only, with Cloudflare on **Flexible**:
+Phase 1 (`deploy/apache-host/tasky.conf`), with Cloudflare on **Flexible**:
 
 ```apache
 <VirtualHost *:80>
@@ -107,15 +112,11 @@ Phase 1 — HTTP only, with Cloudflare on **Flexible**:
 </VirtualHost>
 ```
 
-```bash
-sudo a2ensite tasky && sudo apache2ctl configtest && sudo systemctl reload apache2
-```
-
 Do **not** add a `Redirect` to https in this vhost while Cloudflare is on
 Flexible — Cloudflare would answer it by fetching the origin over http again and
 loop forever.
 
-Phase 2 — add TLS on the host and move Cloudflare to **Full**:
+Phase 2 (`deploy/apache-host/tasky-ssl.conf`) — add TLS on the host and move Cloudflare to **Full**:
 
 ```apache
 <VirtualHost *:80>
@@ -354,7 +355,8 @@ Logs: `make prod-logs`. Certificate in use: `make prod-certs`. Disk: `make clean
 | | |
 |---|---|
 | Environment variables | `docs/.env.production.example`, and the table in `README.md` |
-| Proxy config | `deploy/apache/tasky-tls.conf`, `tasky-http.conf`, `entrypoint.sh` |
+| Container proxy | `deploy/apache/tasky-tls.conf`, `tasky-http.conf`, `entrypoint.sh` |
+| **Host Apache vhosts** | `deploy/apache-host/` — install to `/etc/apache2/sites-available/` |
 | Certificates | `deploy/apache/certs/README.md` |
 | Accounts and roles | `docs/dev-credentials.md` |
 | Outstanding risks | `docs/tech-debt.md`, `docs/follow-ups.md` |

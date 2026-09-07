@@ -56,7 +56,9 @@ tasky/
 │   ├── index.html              #   the SPA shell — also the Django template
 │   └── static/{css,js}/
 ├── design/                     # signed-off prototype — open index.html directly
-├── deploy/apache/              # reverse proxy image, vhost, Cloudflare IP ranges
+├── deploy/
+│   ├── apache/                 # proxy container image, vhosts, Cloudflare ranges
+│   └── apache-host/            # host Apache vhosts for /etc/apache2/sites-available/
 ├── docs/
 │   ├── api.md                  # THE API CONTRACT — read before any client work
 │   ├── follow-ups.md           # deferred work + deliberate non-goals
