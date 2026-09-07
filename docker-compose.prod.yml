@@ -34,7 +34,14 @@ services:
       web:
         condition: service_healthy
     environment:
-      TASKY_TLS: "on"
+      # Phase 1 of go-live runs TLS=off with Cloudflare on "Flexible", so the
+      # origin only needs port 80. Phase 2 flips this to "on" and Cloudflare to
+      # "Full". Set TASKY_TLS in .env.prod; see docs/deployment.md.
+      #
+      # With TLS off the :80 vhost does NOT redirect to https — under Flexible
+      # that redirect would loop forever, because Cloudflare would answer the
+      # redirect by fetching the origin over http again.
+      TASKY_TLS: "${TASKY_TLS:-on}"
       TASKY_SERVER_NAME: "tasky.tailwebs.com"
     ports:
       - "80:80"
@@ -46,7 +53,9 @@ services:
       - ./deploy/apache/certs:/usr/local/apache2/conf/certs
       - static:/srv/static:ro
     healthcheck:
-      test: ["CMD", "curl", "-fsSk", "https://127.0.0.1/api/auth/csrf/"]
+      # Tries https then falls back to http, so the same healthcheck works in
+      # both go-live phases.
+      test: ["CMD-SHELL", "curl -fsSk https://127.0.0.1/api/auth/csrf/ || curl -fsS http://127.0.0.1/api/auth/csrf/"]
       interval: 30s
       timeout: 5s
       retries: 5

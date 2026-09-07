@@ -60,6 +60,7 @@ tasky/
 ├── docs/
 │   ├── api.md                  # THE API CONTRACT — read before any client work
 │   ├── follow-ups.md           # deferred work + deliberate non-goals
+│   ├── deployment.md           # go-live runbook, verification, rollback
 │   ├── dev-credentials.md
 │   └── .env.*.example
 └── tests/                      # cross-cutting: settings guard, SPA routing, smoke
@@ -153,6 +154,10 @@ make deploy-prod         # prompts, then builds, migrates, collectstatic,
 make prod-logs
 make prod-backup         # mysqldump to ./backups/
 ```
+
+**Full runbook: [`docs/deployment.md`](docs/deployment.md)** — the two-phase
+go-live (port 80 first, then 443), the security-group rules, what to verify
+afterwards, rollback, and a troubleshooting table.
 
 Before the first deploy, put a **Cloudflare Origin Certificate** in
 `deploy/apache/certs/` — see

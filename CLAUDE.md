@@ -12,6 +12,7 @@ use. Django + DRF + MySQL, with a vanilla-JS front end Django serves directly.
 | `.claude/tailwebs-profile.json` | Committed setup record (archetype, phases) |
 | `docs/api.md` | **The API contract.** Read before any client code |
 | `docs/follow-ups.md` | Deferred work **and deliberate non-goals** |
+| `docs/deployment.md` | Go-live runbook, post-deploy verification, rollback |
 | `docs/superpowers/specs/` | Per-sub-project design specs |
 | `docs/superpowers/plans/` | Executed implementation plans |
 
