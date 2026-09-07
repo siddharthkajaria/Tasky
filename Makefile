@@ -17,7 +17,7 @@ export COMPOSE_HTTP_TIMEOUT
         migrate makemigrations showmigrations createsuperuser collectstatic \
         build check-deploy cf-ips \
         deploy-stage deploy-stage-here stage-up stage-down stage-migrate stage-logs stage-shell \
-        deploy-prod prod-up prod-down prod-migrate prod-logs prod-shell prod-certs prod-backup \
+        deploy-prod prod-up prod-down prod-migrate prod-logs prod-shell prod-verify prod-certs prod-backup \
         clean
 
 help:  ## Show this help
@@ -126,6 +126,23 @@ cf-ips:  ## Refresh the Cloudflare trusted-proxy ranges
 
 DC_STAGE := docker compose -f docker-compose.stage.yml
 
+# Compose only substitutes ${VAR} from the shell or the default .env — never
+# from a service's env_file. TASKY_TLS is a compose-level variable (it selects
+# the proxy's vhost), so setting it in .env.prod would otherwise be silently
+# ignored. Lift it into the environment of every compose call instead, so the
+# value documented in docs/deployment.md is the value that takes effect.
+# Empty or absent falls through to the ${TASKY_TLS:-on} default in the compose file.
+envvar = $(2)=$(shell grep -sE '^$(2)=' $(1) | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')
+tls_from = $(call envvar,$(1),TASKY_TLS)
+PROD_VARS  = ENV_FILE=.env.prod $(call tls_from,.env.prod) \
+             $(call envvar,.env.prod,TASKY_HTTP_BIND) $(call envvar,.env.prod,TASKY_HTTPS_BIND)
+STAGE_VARS = ENV_FILE=.env.stage
+
+# ALLOWED_HOSTS is only the real domain, so every loopback probe must carry a
+# matching Host header or Django answers 400 DisallowedHost.
+PROD_DOMAIN := tasky.tailwebs.com
+HOSTHDR     := -H "Host: $(PROD_DOMAIN)"
+
 PROD_BRANCH  := main
 STAGE_BRANCH := stage
 
@@ -133,29 +150,29 @@ STAGE_BRANCH := stage
 define deploy
 	@echo ""
 	@echo "==> [$(1)] 1/6  building images"
-	ENV_FILE=$(3) $(2) build
+	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) build
 	@echo ""
 	@echo "==> [$(1)] 2/6  checking for unapplied model changes"
-	@ENV_FILE=$(3) $(2) run --rm web python manage.py makemigrations --check --dry-run \
+	@ENV_FILE=$(3) $(call tls_from,$(3)) $(2) run --rm web python manage.py makemigrations --check --dry-run \
 		|| { echo "FATAL: models have changes with no migration. Run 'make makemigrations' and commit them."; exit 1; }
 	@echo ""
 	@echo "==> [$(1)] 3/6  applying migrations"
-	ENV_FILE=$(3) $(2) run --rm web python manage.py migrate --noinput
+	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) run --rm web python manage.py migrate --noinput
 	@echo ""
 	@echo "==> [$(1)] 4/6  collecting static files"
-	ENV_FILE=$(3) $(2) run --rm web python manage.py collectstatic --noinput
+	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) run --rm web python manage.py collectstatic --noinput
 	@echo ""
 	@echo "==> [$(1)] 5/6  starting the app"
-	ENV_FILE=$(3) $(2) up -d --remove-orphans
+	ENV_FILE=$(3) $(call tls_from,$(3)) $(2) up -d --remove-orphans
 	@echo ""
 	@echo "==> [$(1)] 6/6  waiting for a healthy response from $(4)"
 	@ok=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		if curl -sf $(5) --max-time 5 "$(4)" >/dev/null 2>&1; then ok=1; break; fi; \
+		if curl -sf $(5) $(HOSTHDR) --max-time 5 "$(4)" >/dev/null 2>&1; then ok=1; break; fi; \
 		sleep 5; \
 	done; \
 	if [ "$$ok" != "1" ]; then \
 		echo ""; echo "FAILED: no healthy response after 60s. Recent logs:"; \
-		ENV_FILE=$(3) $(2) logs --tail 40; \
+		ENV_FILE=$(3) $(call tls_from,$(3)) $(2) logs --tail 40; \
 		exit 1; \
 	fi
 	@echo ""
@@ -165,7 +182,7 @@ define deploy
 	@docker container prune -f >/dev/null 2>&1 || true
 	@echo ""
 	@echo "  [$(1)] deploy complete and healthy."
-	@ENV_FILE=$(3) $(2) ps
+	@ENV_FILE=$(3) $(call tls_from,$(3)) $(2) ps
 endef
 
 # Refuse to deploy from the wrong branch or a dirty tree — the image is built
@@ -221,24 +238,54 @@ deploy-prod:  ## Full production deploy from 'main' (prompts first)
 	@echo ""
 	@read -p "  Continue? [y/N] " ok; [ "$$ok" = "y" ] || { echo "Aborted."; exit 1; }
 	$(call deploy,production,$(DC_PROD),.env.prod,https://127.0.0.1/api/auth/csrf/,-k)
+	@$(MAKE) --no-print-directory prod-verify
 
 prod-up:  ## Start production without rebuilding
-	ENV_FILE=.env.prod $(DC_PROD) up -d
+	$(PROD_VARS) $(DC_PROD) up -d
 
 prod-down:  ## Stop production
-	ENV_FILE=.env.prod $(DC_PROD) down
+	$(PROD_VARS) $(DC_PROD) down
 
 prod-migrate:  ## Migrate the production database
-	ENV_FILE=.env.prod $(DC_PROD) run --rm web python manage.py migrate
+	$(PROD_VARS) $(DC_PROD) run --rm web python manage.py migrate
 
 prod-logs:  ## Follow production logs
-	ENV_FILE=.env.prod $(DC_PROD) logs -f
+	$(PROD_VARS) $(DC_PROD) logs -f
 
 prod-shell:  ## Django shell against production
-	ENV_FILE=.env.prod $(DC_PROD) run --rm web python manage.py shell
+	$(PROD_VARS) $(DC_PROD) run --rm web python manage.py shell
+
+prod-verify:  ## Post-deploy checks — run this after every production deploy
+	@echo ""
+	@echo "── Post-deploy verification ─────────────────────────────────────────"
+	@fail=0; \
+	printf "  %-46s" "containers running"; \
+	  n=$$($(PROD_VARS) $(DC_PROD) ps --status running -q | wc -l | tr -d ' '); \
+	  if [ "$$n" = "2" ]; then echo "PASS  web + proxy"; else echo "FAIL  $$n of 2 running"; fail=1; fi; \
+	printf "  %-46s" "gunicorn NOT published to the host"; \
+	  if $(PROD_VARS) $(DC_PROD) port web 8000 >/dev/null 2>&1; then echo "FAIL  port 8000 is published"; fail=1; else echo "PASS"; fi; \
+	printf "  %-46s" "SPA shell answers"; \
+	  c=$$(curl -sk $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/ 2>/dev/null || curl -s $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/); \
+	  if [ "$$c" = "200" ]; then echo "PASS  200"; else echo "FAIL  got $$c"; fail=1; fi; \
+	printf "  %-46s" "unauthenticated API returns 403 not 401"; \
+	  c=$$(curl -sk $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/api/projects/ 2>/dev/null || curl -s $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/api/projects/); \
+	  if [ "$$c" = "403" ]; then echo "PASS  403"; else echo "FAIL  got $$c"; fail=1; fi; \
+	printf "  %-46s" "static served by Apache"; \
+	  s=$$(curl -skI $(HOSTHDR) --max-time 10 https://127.0.0.1/static/js/app.js 2>/dev/null | grep -i '^server:' || curl -sI $(HOSTHDR) --max-time 10 http://127.0.0.1/static/js/app.js | grep -i '^server:'); \
+	  case "$$s" in *Apache*) echo "PASS  $$s";; *) echo "FAIL  $$s"; fail=1;; esac; \
+	printf "  %-46s" "DEBUG is off (404 is not a traceback)"; \
+	  b=$$(curl -sk $(HOSTHDR) --max-time 10 https://127.0.0.1/api/nope/ 2>/dev/null || curl -s $(HOSTHDR) --max-time 10 http://127.0.0.1/api/nope/); \
+	  case "$$b" in *Traceback*|*DEBUG*) echo "FAIL  traceback leaked"; fail=1;; *) echo "PASS";; esac; \
+	printf "  %-46s" "no unapplied migrations"; \
+	  if $(PROD_VARS) $(DC_PROD) run --rm web python manage.py migrate --check >/dev/null 2>&1; then echo "PASS"; else echo "FAIL  run: make prod-migrate"; fail=1; fi; \
+	printf "  %-46s" "Django deployment audit"; \
+	  o=$$($(PROD_VARS) $(DC_PROD) run --rm web python manage.py check --deploy --fail-level WARNING 2>&1 | tail -1); \
+	  case "$$o" in *"no issues"*) echo "PASS";; *) echo "FAIL  $$o"; fail=1;; esac; \
+	echo "─────────────────────────────────────────────────────────────────────"; \
+	if [ "$$fail" = "0" ]; then echo "  All checks passed."; else echo "  SOME CHECKS FAILED — see docs/deployment.md"; exit 1; fi
 
 prod-certs:  ## Show the certificate the proxy is currently serving
-	ENV_FILE=.env.prod $(DC_PROD) exec proxy \
+	$(PROD_VARS) $(DC_PROD) exec proxy \
 		openssl x509 -noout -subject -issuer -dates -in /usr/local/apache2/conf/certs/origin.pem
 
 prod-backup:  ## Dump the production database to ./backups/
