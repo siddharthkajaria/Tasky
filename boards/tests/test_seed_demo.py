@@ -1,8 +1,10 @@
 import io
+from unittest import mock
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 
 from boards.models import Board, WorkItem
@@ -56,3 +58,32 @@ def test_seed_warns_which_database_it_is_about_to_write_to():
     assert connection.settings_dict["NAME"] in output
     assert "NEVER" in output
     assert "production" in output.lower()
+
+
+@pytest.mark.django_db
+def test_seed_refuses_a_non_local_database_host():
+    """seed_demo creates accounts whose password is committed to this repo, so
+    pointing it at anything that is not obviously a throwaway local database
+    must fail loudly rather than warn."""
+    from django.db import connection
+
+    with mock.patch.dict(
+        connection.settings_dict, {"HOST": "tasky.abc123.ap-south-1.rds.amazonaws.com"}
+    ):
+        with pytest.raises(CommandError, match="does not look like a local development database"):
+            call_command("seed_demo")
+
+    assert not get_user_model().objects.filter(username="asha").exists()
+
+
+@pytest.mark.django_db
+def test_seed_force_overrides_the_non_local_guard():
+    from django.db import connection
+
+    with mock.patch.dict(
+        connection.settings_dict, {"HOST": "tasky.abc123.ap-south-1.rds.amazonaws.com"}
+    ):
+        call_command("seed_demo", force=True)
+
+    assert get_user_model().objects.filter(username="asha").exists()
+
