@@ -132,9 +132,16 @@ DC_STAGE := docker compose -f docker-compose.stage.yml
 # ignored. Lift it into the environment of every compose call instead, so the
 # value documented in docs/deployment.md is the value that takes effect.
 # Empty or absent falls through to the ${TASKY_TLS:-on} default in the compose file.
-tls_from = TASKY_TLS=$(shell grep -sE '^TASKY_TLS=' $(1) | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')
-PROD_VARS  = ENV_FILE=.env.prod $(call tls_from,.env.prod)
+envvar = $(2)=$(shell grep -sE '^$(2)=' $(1) | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')
+tls_from = $(call envvar,$(1),TASKY_TLS)
+PROD_VARS  = ENV_FILE=.env.prod $(call tls_from,.env.prod) \
+             $(call envvar,.env.prod,TASKY_HTTP_BIND) $(call envvar,.env.prod,TASKY_HTTPS_BIND)
 STAGE_VARS = ENV_FILE=.env.stage
+
+# ALLOWED_HOSTS is only the real domain, so every loopback probe must carry a
+# matching Host header or Django answers 400 DisallowedHost.
+PROD_DOMAIN := tasky.tailwebs.com
+HOSTHDR     := -H "Host: $(PROD_DOMAIN)"
 
 PROD_BRANCH  := main
 STAGE_BRANCH := stage
@@ -160,7 +167,7 @@ define deploy
 	@echo ""
 	@echo "==> [$(1)] 6/6  waiting for a healthy response from $(4)"
 	@ok=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
-		if curl -sf $(5) --max-time 5 "$(4)" >/dev/null 2>&1; then ok=1; break; fi; \
+		if curl -sf $(5) $(HOSTHDR) --max-time 5 "$(4)" >/dev/null 2>&1; then ok=1; break; fi; \
 		sleep 5; \
 	done; \
 	if [ "$$ok" != "1" ]; then \
@@ -258,16 +265,16 @@ prod-verify:  ## Post-deploy checks — run this after every production deploy
 	printf "  %-46s" "gunicorn NOT published to the host"; \
 	  if $(PROD_VARS) $(DC_PROD) port web 8000 >/dev/null 2>&1; then echo "FAIL  port 8000 is published"; fail=1; else echo "PASS"; fi; \
 	printf "  %-46s" "SPA shell answers"; \
-	  c=$$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/ 2>/dev/null || curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/); \
+	  c=$$(curl -sk $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/ 2>/dev/null || curl -s $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/); \
 	  if [ "$$c" = "200" ]; then echo "PASS  200"; else echo "FAIL  got $$c"; fail=1; fi; \
 	printf "  %-46s" "unauthenticated API returns 403 not 401"; \
-	  c=$$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/api/projects/ 2>/dev/null || curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/api/projects/); \
+	  c=$$(curl -sk $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/api/projects/ 2>/dev/null || curl -s $(HOSTHDR) -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1/api/projects/); \
 	  if [ "$$c" = "403" ]; then echo "PASS  403"; else echo "FAIL  got $$c"; fail=1; fi; \
 	printf "  %-46s" "static served by Apache"; \
-	  s=$$(curl -skI --max-time 10 https://127.0.0.1/static/js/app.js 2>/dev/null | grep -i '^server:' || curl -sI --max-time 10 http://127.0.0.1/static/js/app.js | grep -i '^server:'); \
+	  s=$$(curl -skI $(HOSTHDR) --max-time 10 https://127.0.0.1/static/js/app.js 2>/dev/null | grep -i '^server:' || curl -sI $(HOSTHDR) --max-time 10 http://127.0.0.1/static/js/app.js | grep -i '^server:'); \
 	  case "$$s" in *Apache*) echo "PASS  $$s";; *) echo "FAIL  $$s"; fail=1;; esac; \
 	printf "  %-46s" "DEBUG is off (404 is not a traceback)"; \
-	  b=$$(curl -sk --max-time 10 https://127.0.0.1/api/nope/ 2>/dev/null || curl -s --max-time 10 http://127.0.0.1/api/nope/); \
+	  b=$$(curl -sk $(HOSTHDR) --max-time 10 https://127.0.0.1/api/nope/ 2>/dev/null || curl -s $(HOSTHDR) --max-time 10 http://127.0.0.1/api/nope/); \
 	  case "$$b" in *Traceback*|*DEBUG*) echo "FAIL  traceback leaked"; fail=1;; *) echo "PASS";; esac; \
 	printf "  %-46s" "no unapplied migrations"; \
 	  if $(PROD_VARS) $(DC_PROD) run --rm web python manage.py migrate --check >/dev/null 2>&1; then echo "PASS"; else echo "FAIL  run: make prod-migrate"; fail=1; fi; \

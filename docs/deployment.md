@@ -41,6 +41,122 @@ makes that assumption true.
 
 ---
 
+## Sharing the server with another app
+
+**This is the case on `13.200.123.23` today.** That box already runs
+`Apache/2.4.58 (Ubuntu)` on the host, serving `efast-staging.tailwebs.com`, and it
+owns :80 and :443. `tasky.tailwebs.com` resolves through Cloudflare to the same
+IP, hits that host Apache, finds no matching vhost and falls through to efast —
+which is exactly the "the URL redirects to the other app" symptom.
+
+The Tasky container **cannot** take :80/:443 there. It binds loopback high ports
+and the host Apache proxies to it:
+
+```
+Cloudflare ──► host Apache :443 ──► tasky proxy container 127.0.0.1:8081 ──► gunicorn :8000
+               (vhost per domain)    (container, TLS off)
+```
+
+### 1. Point the container at loopback
+
+In `.env.prod`:
+
+```
+TASKY_TLS=off                    # the host Apache terminates TLS, not us
+TASKY_HTTP_BIND=127.0.0.1:8081   # loopback only — never 0.0.0.0 on a shared box
+TASKY_HTTPS_BIND=127.0.0.1:8444  # unused while TASKY_TLS=off
+DJANGO_SECURE_SSL_REDIRECT=0     # the host Apache owns the http->https redirect
+DJANGO_BEHIND_PROXY=1            # keep ON  — trust X-Forwarded-Proto
+DJANGO_SECURE_COOKIES=1          # keep ON  — the visitor really is on https
+```
+
+Binding to `127.0.0.1` matters. `0.0.0.0:8081` would be reachable from the
+internet and would bypass both the host Apache and Cloudflare.
+
+Then `make deploy-prod`. Confirm it is listening on loopback only:
+
+```bash
+sudo ss -lntp | grep 8081        # expect 127.0.0.1:8081, NOT 0.0.0.0:8081
+curl -sI -H 'Host: tasky.tailwebs.com' http://127.0.0.1:8081/ | head -1
+```
+
+### 2. Add the host Apache vhost
+
+```bash
+sudo a2enmod proxy proxy_http headers ssl
+sudo nano /etc/apache2/sites-available/tasky.conf
+```
+
+Phase 1 — HTTP only, with Cloudflare on **Flexible**:
+
+```apache
+<VirtualHost *:80>
+    ServerName tasky.tailwebs.com
+
+    # Cloudflare terminates the visitor's TLS, so tell Django the real scheme.
+    # Without this it sets Secure cookies the browser will not send back, and
+    # the user is signed out on the next request.
+    RequestHeader set X-Forwarded-Proto "https"
+
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:8081/
+    ProxyPassReverse / http://127.0.0.1:8081/
+
+    ErrorLog  ${APACHE_LOG_DIR}/tasky-error.log
+    CustomLog ${APACHE_LOG_DIR}/tasky-access.log combined
+</VirtualHost>
+```
+
+```bash
+sudo a2ensite tasky && sudo apache2ctl configtest && sudo systemctl reload apache2
+```
+
+Do **not** add a `Redirect` to https in this vhost while Cloudflare is on
+Flexible — Cloudflare would answer it by fetching the origin over http again and
+loop forever.
+
+Phase 2 — add TLS on the host and move Cloudflare to **Full**:
+
+```apache
+<VirtualHost *:80>
+    ServerName tasky.tailwebs.com
+    RedirectPermanent / https://tasky.tailwebs.com/
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName tasky.tailwebs.com
+
+    SSLEngine on
+    SSLCertificateFile    /etc/ssl/tailwebs/origin.pem
+    SSLCertificateKeyFile /etc/ssl/tailwebs/origin.key
+
+    RequestHeader set X-Forwarded-Proto "https"
+    ProxyPreserveHost On
+    ProxyPass        / http://127.0.0.1:8081/
+    ProxyPassReverse / http://127.0.0.1:8081/
+</VirtualHost>
+```
+
+The certificate can be a Cloudflare Origin Certificate for `*.tailwebs.com`
+(SSL/TLS → Origin Server → Create Certificate), or whatever cert
+`efast-staging` already uses if it covers the domain. Then set
+`DJANGO_SECURE_SSL_REDIRECT=1` in `.env.prod` and redeploy.
+
+### Caveat: client IPs in container logs
+
+`mod_remoteip` in the Tasky container only trusts Cloudflare ranges, and its
+immediate peer is now the host Apache, so container access logs will show the
+Docker gateway address rather than the real visitor. The host Apache's own logs
+have the true client IP. Cosmetic — nothing in the app reads the client address.
+
+### Why keep the Tasky proxy container at all
+
+The host Apache could proxy straight to gunicorn, but then it would also have to
+serve `/static/`, which lives in a Docker volume. Keeping the container's Apache
+means the host vhost is four lines and knows nothing about Tasky's internals.
+
+---
+
 ## Go-live: port 80 first, then 443
 
 Two phases, because the phase-1 config and the phase-2 config differ in one
@@ -217,6 +333,8 @@ Take `make prod-backup` before any deploy carrying a destructive migration.
 
 | Symptom | Cause |
 |---|---|
+| **The domain serves a different app on the server** | The host web server has no vhost for `tasky.tailwebs.com`, so the request falls through to its default. See "Sharing the server". |
+| `bind: address already in use` on deploy | Another process owns :80/:443. Same section — bind loopback high ports instead. |
 | `ERR_TOO_MANY_REDIRECTS` | Cloudflare on **Flexible** while `TASKY_TLS=on` or `DJANGO_SECURE_SSL_REDIRECT=1`. Either move Cloudflare to Full, or set both off. |
 | Cloudflare **521** (origin down) | Nothing listening on the port Cloudflare is using, or the security group blocks it. `make prod-logs`. |
 | Cloudflare **526** (invalid certificate) | Cloudflare is on **Full (strict)** but the origin has the generated self-signed certificate. Move to Full, or install a real Origin Certificate. |

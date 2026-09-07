@@ -19,7 +19,17 @@ services:
       - media:/app/media          # uploaded attachments must survive a redeploy
       - static:/app/staticfiles
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/auth/csrf/"]
+      # Two headers, both load-bearing:
+      #   Host              ALLOWED_HOSTS is just the domain, so a probe to
+      #                     127.0.0.1 is rejected by Django with 400 DisallowedHost.
+      #   X-Forwarded-Proto SECURE_SSL_REDIRECT=1 turns a plain-http probe into a
+      #                     301, which `curl -f` treats as success — a false pass
+      #                     that would mark a broken app healthy.
+      # With both set this returns the real 204 the endpoint is supposed to give.
+      test: ["CMD", "curl", "-fsS",
+             "-H", "Host: tasky.tailwebs.com",
+             "-H", "X-Forwarded-Proto: https",
+             "http://127.0.0.1:8000/api/auth/csrf/"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -44,8 +54,18 @@ services:
       TASKY_TLS: "${TASKY_TLS:-on}"
       TASKY_SERVER_NAME: "tasky.tailwebs.com"
     ports:
-      - "80:80"
-      - "443:443"
+      # Defaults to owning the box's :80 and :443, which is right when Tasky is
+      # the only thing on the server.
+      #
+      # If another web server already holds those ports, bind to loopback high
+      # ports instead and let that server proxy to us — set in .env.prod:
+      #   TASKY_HTTP_BIND=127.0.0.1:8081
+      #   TASKY_HTTPS_BIND=127.0.0.1:8444
+      # Loopback matters: a 0.0.0.0 high port would be reachable from the
+      # internet and would bypass both the existing server and Cloudflare.
+      # See docs/deployment.md, "Sharing the server".
+      - "${TASKY_HTTP_BIND:-0.0.0.0:80}:80"
+      - "${TASKY_HTTPS_BIND:-0.0.0.0:443}:443"
     volumes:
       # Read-write: the entrypoint writes a self-signed pair here on first boot
       # if none exists. Drop a real Cloudflare Origin Certificate in to replace
@@ -54,8 +74,9 @@ services:
       - static:/srv/static:ro
     healthcheck:
       # Tries https then falls back to http, so the same healthcheck works in
-      # both go-live phases.
-      test: ["CMD-SHELL", "curl -fsSk https://127.0.0.1/api/auth/csrf/ || curl -fsS http://127.0.0.1/api/auth/csrf/"]
+      # both go-live phases. The Host header is required for the same reason as
+      # the web service above.
+      test: ["CMD-SHELL", "curl -fsSk -H 'Host: tasky.tailwebs.com' https://127.0.0.1/api/auth/csrf/ || curl -fsS -H 'Host: tasky.tailwebs.com' http://127.0.0.1/api/auth/csrf/"]
       interval: 30s
       timeout: 5s
       retries: 5
