@@ -55,3 +55,4 @@ logs/
 # ...except the Live Server config, which the UI workflow depends on.
 !.vscode/settings.json
 
+.gstack/
