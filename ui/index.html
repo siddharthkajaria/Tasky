@@ -117,6 +117,17 @@
     </section>
 
     <section>
+      <h2 class="section-label">Statuses</h2>
+      <p class="page-sub section-note">The board's columns for this project, in order. Owner and Admins manage the list — each of To Do, In Progress and Done needs at least one status.</p>
+      <ul class="order-list" data-statuses></ul>
+      <form class="create-status" data-create-status novalidate hidden>
+        <input name="name" placeholder="Status name" aria-label="Status name" required>
+        <select name="category" aria-label="Category" data-category-select></select>
+        <button class="btn" type="submit">Add</button>
+      </form>
+    </section>
+
+    <section>
       <h2 class="section-label">Members</h2>
       <ul class="member-list" data-members></ul>
     </section>

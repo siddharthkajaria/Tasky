@@ -854,6 +854,80 @@ button, input, textarea, select { font: inherit; color: inherit; }
   text-transform: uppercase;
 }
 
+/* Statuses (sub-project 3) --------------------------------------------- */
+
+.create-status[hidden] { display: none; }
+.create-status { display: flex; gap: 8px; margin: 0 0 8px; }
+.create-status input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 10px;
+}
+.create-status select {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+/* Ordered lists a human hand-sorts: this phase's statuses, and later
+   phases' field options and screen fields (Phase 5) — one row shape so
+   "reorder" reads as one idea everywhere it appears. */
+.order-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--sunk);
+  border-radius: var(--r);
+  padding: 6px 8px 6px 4px;
+  font-size: 12.5px;
+  animation: row-in .18s var(--ease-out) both;
+}
+.order-row .label { flex: 1; }
+.order-row .label[contenteditable] { border-radius: 2px; padding: 1px 4px; margin: -1px -4px; }
+.order-row .label[contenteditable]:hover,
+.order-row .label[contenteditable]:focus { background: var(--surface); outline: none; }
+.order-row .btn-danger { padding: 2px 8px; font-size: 11px; }
+.order-row select {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 3px 6px;
+  font-size: 11px;
+}
+.order-row .hint { margin: 0; font-size: 11px; color: var(--ink-3); }
+
+.order-handle { display: flex; flex-direction: column; gap: 1px; }
+.icon-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  border-radius: 2px;
+  line-height: 1;
+  padding: 0 4px;
+  font-size: 9px;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.icon-btn:hover:not([disabled]) { background: var(--surface); color: var(--ink); }
+.icon-btn[disabled] { opacity: .3; cursor: default; }
+
+/* Same three colours the board's own columns use (.column-active /
+   .column-done), pulled out as standalone dots for this list. */
+.cat-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--rule-2);
+}
+.cat-dot.cat-in_progress { background: var(--accent); }
+.cat-dot.cat-done { background: var(--ink-3); }
+
 /* Responsive ---------------------------------------------------------- */
 
 @media (max-width: 880px) {
