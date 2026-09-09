@@ -464,8 +464,6 @@ const Store = (() => {
     return wait(statusesForProject(projectId));
   }
 
-  let nextStatusIdCounter = nextStatusId;   // seedDefaultStatuses already advances nextStatusId as it seeds
-
   function createStatus(projectId, fields) {
     if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
     const role = myRole(projectId);
@@ -477,7 +475,7 @@ const Store = (() => {
     }
     const siblings = statusesForProject(projectId);
     const status = {
-      id: ++nextStatusIdCounter, project: Number(projectId),
+      id: ++nextStatusId, project: Number(projectId),
       name: fields.name.trim(), category: fields.category, position: siblings.length,
     };
     statuses.push(status);
