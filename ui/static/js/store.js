@@ -464,6 +464,73 @@ const Store = (() => {
     return wait(statusesForProject(projectId));
   }
 
+  let nextStatusIdCounter = nextStatusId;   // seedDefaultStatuses already advances nextStatusId as it seeds
+
+  function createStatus(projectId, fields) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (!Logic.canManageStatuses(role)) return fail(403, { detail: "You don't have permission to manage statuses." });
+    if (!fields.name || !fields.name.trim()) return fail(400, { name: 'This field may not be blank.' });
+    if (!Logic.CATEGORIES.includes(fields.category)) {
+      return fail(400, { category: `"${fields.category}" is not a valid choice.` });
+    }
+    const siblings = statusesForProject(projectId);
+    const status = {
+      id: ++nextStatusIdCounter, project: Number(projectId),
+      name: fields.name.trim(), category: fields.category, position: siblings.length,
+    };
+    statuses.push(status);
+    return wait(status);
+  }
+
+  function updateStatus(projectId, statusId, fields) {
+    const status = statusById(statusId);
+    if (!status || status.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(status.project);
+    if (!role) return denied();
+    if (!Logic.canManageStatuses(role)) return fail(403, { detail: "You don't have permission to manage statuses." });
+
+    if ('category' in fields && fields.category !== status.category) {
+      if (!Logic.CATEGORIES.includes(fields.category)) {
+        return fail(400, { category: `"${fields.category}" is not a valid choice.` });
+      }
+      const remainingInOldCategory = statusesForProject(status.project)
+        .filter(s => s.id !== status.id && s.category === status.category);
+      if (!remainingInOldCategory.length) {
+        return fail(400, { category: `${Logic.CATEGORY_LABELS[status.category]} needs at least one status.` });
+      }
+    }
+    if ('name' in fields) {
+      if (!fields.name || !fields.name.trim()) return fail(400, { name: 'This field may not be blank.' });
+      status.name = fields.name.trim();
+    }
+    if ('category' in fields) status.category = fields.category;
+    if ('position' in fields) status.position = Number(fields.position);
+    return wait(status);
+  }
+
+  function deleteStatus(projectId, statusId) {
+    const status = statusById(statusId);
+    if (!status || status.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(status.project);
+    if (!role) return denied();
+    if (!Logic.canManageStatuses(role)) return fail(403, { detail: "You don't have permission to manage statuses." });
+
+    const inUse = workItems.filter(w => w.status === status.id).length;
+    if (inUse) {
+      return fail(400, { detail: `"${status.name}" is still used by ${inUse} work item(s). Move them first.` });
+    }
+    const remainingInCategory = statusesForProject(status.project)
+      .filter(s => s.id !== status.id && s.category === status.category);
+    if (!remainingInCategory.length) {
+      return fail(400, { detail: `${Logic.CATEGORY_LABELS[status.category]} needs at least one status.` });
+    }
+    statuses = statuses.filter(s => s.id !== status.id);
+    statusesForProject(status.project).forEach((s, i) => { s.position = i; });
+    return wait(null);
+  }
+
   /* ---- work items ------------------------------------------------------ */
 
   function hierarchyError(itemType, parent) {
@@ -767,7 +834,8 @@ const Store = (() => {
     listProjects, getProject, createProject, deleteProject,
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
     listMyInvitations, acceptInvitation, declineInvitation,
-    listBoards, getBoard, createBoard, getBoardWorkItems, listStatuses,
+    listBoards, getBoard, createBoard, getBoardWorkItems,
+    listStatuses, createStatus, updateStatus, deleteStatus,
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
     listLinks, createLink, deleteLink,
