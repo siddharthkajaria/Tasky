@@ -9,6 +9,17 @@ const Logic = (() => {
 
   const PRIORITY_LABELS = { 1: 'Low', 2: 'Medium', 3: 'High' };
 
+  /* ---- Workflow status categories (sub-project 3) ------------------------
+     Fixed, three-value vocabulary every status (built-in or custom) is
+     tagged with. Many statuses can share a category — "Blocked" and "In
+     Review" might both be tagged in_progress alongside "In Progress"
+     itself. The board's column styling already keys off `status.category`
+     (see `columnEl` in app.js), never off a status's name. */
+  const CATEGORIES = ['todo', 'in_progress', 'done'];
+  const CATEGORY_LABELS = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
+
+  const canManageStatuses = (role) => role === 'owner' || role === 'admin';
+
   /* ---- Project roles --------------------------------------------------- */
 
   /* The permission matrix from the Projects & Membership spec. It is
@@ -195,6 +206,7 @@ const Logic = (() => {
   return {
     PRIORITY_LABELS,
     ROLE_LABEL,
+    CATEGORIES, CATEGORY_LABELS, canManageStatuses,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
