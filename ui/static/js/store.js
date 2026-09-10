@@ -114,6 +114,40 @@ const Store = (() => {
     return { ids, error: null };
   }
 
+  let customFields = [];
+  let nextFieldId = 5000;
+  const fieldById = (fid) => customFields.find(f => f.id === Number(fid)) || null;
+
+  let fieldOptions = [];
+  let nextOptionId = 6000;
+  const optionsForField = (fieldId) =>
+    fieldOptions.filter(o => o.field === Number(fieldId)).sort((a, b) => a.position - b.position);
+
+  let screens = [];
+  let nextScreenId = 7000;
+  const screenById = (sid) => screens.find(s => s.id === Number(sid)) || null;
+
+  let screenFields = [];
+  let nextScreenFieldId = 8000;
+  const screenFieldsFor = (screenId) =>
+    screenFields.filter(r => r.screen === Number(screenId)).sort((a, b) => a.position - b.position);
+
+  // { [projectId]: { epic: screenId|null, story: ..., task: ..., bug: ..., subtask: ... } }
+  const screenAssignments = {};
+  function assignmentsForProject(projectId) {
+    if (!screenAssignments[projectId]) {
+      screenAssignments[projectId] = { epic: null, story: null, task: null, bug: null, subtask: null };
+    }
+    return screenAssignments[projectId];
+  }
+
+  const fieldOut = (f) => Object.assign({}, f, {
+    options: optionsForField(f.id),
+    created_by: userById(f.created_by),
+  });
+  const screenFieldOut = (r) => Object.assign({}, r, { field_detail: fieldOut(fieldById(r.field)) });
+  const screenOut = (s) => Object.assign({}, s, { fields: screenFieldsFor(s.id).map(screenFieldOut) });
+
   /* Work item statuses (sub-project 3, Workflows). Per-project and
      configurable on the real backend; the mock only needs the fixed
      "simple" 3-status preset every project starts with, since nothing here
@@ -173,7 +207,7 @@ const Store = (() => {
   function seed(o) {
     const item = Object.assign({
       description: '', status: P1_TODO, priority: 2, due_date: null, assignee: null,
-      parent: null, position: 0, components: [], labels: [], created_by: 1,
+      parent: null, position: 0, components: [], labels: [], custom_fields: {}, created_by: 1,
       created_at: now(), updated_at: now(),
     }, o);
     workItems.push(item);
@@ -296,6 +330,7 @@ const Store = (() => {
       components_detail: components.filter(c => w.components.includes(c.id)),
       labels_detail: labels.filter(l => (w.labels || []).includes(l.id)),
       status_detail: statusById(w.status),
+      custom_fields: w.custom_fields || {},
     });
   }
 
@@ -658,6 +693,48 @@ const Store = (() => {
     return wait(itemOut(item));
   }
 
+  /* Validates `payload.custom_fields` against the assigned screen for
+     `itemType` in `projectId`. Returns `{ value, error }` — `error` is
+     `{ custom_fields: <message-or-per-field-object> }` on failure, matching
+     the shape docs/api.md documents for the real endpoint's 400 body. */
+  function validateCustomFields(projectId, itemType, rawValues, currentValues) {
+    const assignments = assignmentsForProject(projectId);
+    const screenId = assignments[itemType];
+    if (!screenId) {
+      if (rawValues && Object.keys(rawValues).length) {
+        const label = Logic.ITEM_TYPE_LABEL[itemType];
+        return { error: { custom_fields: `${label} items in this project have no screen assigned, so custom fields can't be set on them.` } };
+      }
+      return { value: currentValues || {} };
+    }
+    const screen = screenById(screenId);
+    const rows = screenFieldsFor(screen.id).map(r => ({ field: fieldById(r.field), required: r.required }));
+    const onScreenIds = new Set(rows.map(r => r.field.id));
+
+    for (const key of Object.keys(rawValues || {})) {
+      if (!onScreenIds.has(Number(key))) {
+        const field = fieldById(key);
+        return { error: { custom_fields: `"${field ? field.name : key}" isn't on the "${screen.name}" screen.` } };
+      }
+    }
+
+    const contextFor = (field) => ({
+      optionIds: optionsForField(field.id).map(o => o.id),
+      memberIds: memberships.filter(m => m.project === Number(projectId)).map(m => m.user),
+    });
+    const errors = Logic.screenValueErrors(rows, rawValues, contextFor);
+    if (Object.keys(errors).length) {
+      const firstFieldId = Object.keys(errors)[0];
+      return { error: { custom_fields: errors[firstFieldId] } };
+    }
+
+    const merged = Object.assign({}, currentValues || {});
+    rows.forEach(r => {
+      if (rawValues && r.field.id in rawValues) merged[r.field.id] = rawValues[r.field.id];
+    });
+    return { value: merged };
+  }
+
   function createWorkItem(fields) {
     const board = boardById(fields.board);
     if (!board) return fail(400, { board: 'Invalid pk — object does not exist.' });
@@ -689,6 +766,13 @@ const Store = (() => {
       if (resolved.error) return fail(400, resolved.error);
       labelIds = resolved.ids;
     }
+    let customFieldsValue = {};
+    if (fields.custom_fields) {
+      const result = validateCustomFields(board.project, itemType, fields.custom_fields, {});
+      if (result.error) return fail(400, result.error);
+      customFieldsValue = result.value;
+    }
+
     const siblings = workItems.filter(w => w.board === board.id && w.status === status);
     const item = seed({
       id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
@@ -696,7 +780,7 @@ const Store = (() => {
       description: fields.description || '', status, position: siblings.length,
       priority: fields.priority || 2, due_date: fields.due_date || null,
       assignee: fields.assignee || null, parent: parent ? parent.id : null,
-      components: fields.components || [], labels: labelIds, created_by: me.id,
+      components: fields.components || [], labels: labelIds, custom_fields: customFieldsValue, created_by: me.id,
     });
     return wait(itemOut(item));
   }
@@ -759,6 +843,11 @@ const Store = (() => {
       const resolved = resolveLabelNames(fields.labels);
       if (resolved.error) return fail(400, resolved.error);
       item.labels = resolved.ids;
+    }
+    if ('custom_fields' in fields) {
+      const result = validateCustomFields(boardProject(item.board), item.item_type, fields.custom_fields, item.custom_fields);
+      if (result.error) return fail(400, result.error);
+      item.custom_fields = result.value;
     }
     item.updated_at = now();
 
@@ -968,6 +1057,249 @@ const Store = (() => {
     return wait(null);
   }
 
+  /* ---- custom fields ----------------------------------------------------- */
+
+  function myRoles() {
+    return memberships.filter(m => m.user === me.id).map(m => m.role);
+  }
+
+  function listFields() { return wait(customFields.map(fieldOut)); }
+
+  function createField(fields) {
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage custom fields." });
+    }
+    const name = (fields.name || '').trim();
+    if (!name) return fail(400, { name: 'This field may not be blank.' });
+    if (customFields.some(f => f.name.toLowerCase() === name.toLowerCase())) {
+      return fail(400, { name: `"${name}" already exists.` });
+    }
+    if (!Logic.FIELD_TYPES.includes(fields.field_type)) {
+      return fail(400, { field_type: `"${fields.field_type}" is not a valid choice.` });
+    }
+    const field = { id: ++nextFieldId, name, field_type: fields.field_type, created_by: me.id, created_at: now() };
+    customFields.push(field);
+    return wait(fieldOut(field));
+  }
+
+  function getField(fieldId) {
+    const field = fieldById(fieldId);
+    return field ? wait(fieldOut(field)) : fail(404, { detail: 'Not found.' });
+  }
+
+  function renameField(fieldId, name) {
+    const field = fieldById(fieldId);
+    if (!field) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage custom fields." });
+    }
+    const trimmed = (name || '').trim();
+    if (!trimmed) return fail(400, { name: 'This field may not be blank.' });
+    if (customFields.some(f => f.id !== field.id && f.name.toLowerCase() === trimmed.toLowerCase())) {
+      return fail(400, { name: `"${trimmed}" already exists.` });
+    }
+    field.name = trimmed;
+    return wait(fieldOut(field));
+  }
+
+  function deleteField(fieldId) {
+    const field = fieldById(fieldId);
+    if (!field) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage custom fields." });
+    }
+    const onAScreen = screenFields.some(r => r.field === field.id);
+    if (onAScreen) return fail(400, { detail: 'This field is still assigned to a screen. Remove it from every screen first.' });
+    customFields = customFields.filter(f => f.id !== field.id);
+    fieldOptions = fieldOptions.filter(o => o.field !== field.id);
+    return wait(null);
+  }
+
+  function addFieldOption(fieldId, label) {
+    const field = fieldById(fieldId);
+    if (!field) return fail(404, { detail: 'Not found.' });
+    if (!Logic.fieldHasOptions(field.field_type)) {
+      return fail(400, { detail: 'Only Select and Multi-select fields have options.' });
+    }
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have permission to manage this field's options." });
+    const trimmed = (label || '').trim();
+    if (!trimmed) return fail(400, { label: 'This field may not be blank.' });
+    const siblings = optionsForField(field.id);
+    if (siblings.some(o => o.label.toLowerCase() === trimmed.toLowerCase())) {
+      return fail(400, { label: `"${trimmed}" already exists for this field.` });
+    }
+    fieldOptions.push({ id: ++nextOptionId, field: field.id, label: trimmed, position: siblings.length });
+    return wait(fieldOut(field));
+  }
+
+  function renameFieldOption(fieldId, optionId, label) {
+    const field = fieldById(fieldId);
+    const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
+    if (!field || !option) return fail(404, { detail: 'Not found.' });
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have permission to manage this field's options." });
+    const trimmed = (label || '').trim();
+    if (!trimmed) return fail(400, { label: 'This field may not be blank.' });
+    if (optionsForField(field.id).some(o => o.id !== option.id && o.label.toLowerCase() === trimmed.toLowerCase())) {
+      return fail(400, { label: `"${trimmed}" already exists for this field.` });
+    }
+    option.label = trimmed;
+    return wait(fieldOut(field));
+  }
+
+  function moveFieldOption(fieldId, optionId, fields) {
+    const field = fieldById(fieldId);
+    const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
+    if (!field || !option) return fail(404, { detail: 'Not found.' });
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have permission to manage this field's options." });
+    if ('position' in fields) option.position = Number(fields.position);
+    return wait(fieldOut(field));
+  }
+
+  function deleteFieldOption(fieldId, optionId) {
+    const field = fieldById(fieldId);
+    const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
+    if (!field || !option) return fail(404, { detail: 'Not found.' });
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have permission to manage this field's options." });
+    const chosen = workItems.some(w => {
+      const v = (w.custom_fields || {})[field.id];
+      return Logic.isMultiValue(field.field_type) ? (v || []).map(Number).includes(option.id) : Number(v) === option.id;
+    });
+    if (chosen) return fail(400, { detail: 'This option is still chosen on a work item.' });
+    fieldOptions = fieldOptions.filter(o => o.id !== option.id);
+    optionsForField(field.id).forEach((o, i) => { o.position = i; });
+    return wait(fieldOut(field));
+  }
+
+  /* ---- screens ------------------------------------------------------------ */
+
+  function listScreens() { return wait(screens.map(screenOut)); }
+
+  function createScreen(name) {
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    const trimmed = (name || '').trim();
+    if (!trimmed) return fail(400, { name: 'This field may not be blank.' });
+    if (screens.some(s => s.name.toLowerCase() === trimmed.toLowerCase())) {
+      return fail(400, { name: `"${trimmed}" already exists.` });
+    }
+    const screen = { id: ++nextScreenId, name: trimmed };
+    screens.push(screen);
+    return wait(screenOut(screen));
+  }
+
+  function getScreen(screenId) {
+    const screen = screenById(screenId);
+    return screen ? wait(screenOut(screen)) : fail(404, { detail: 'Not found.' });
+  }
+
+  function renameScreen(screenId, name) {
+    const screen = screenById(screenId);
+    if (!screen) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    const trimmed = (name || '').trim();
+    if (!trimmed) return fail(400, { name: 'This field may not be blank.' });
+    if (screens.some(s => s.id !== screen.id && s.name.toLowerCase() === trimmed.toLowerCase())) {
+      return fail(400, { name: `"${trimmed}" already exists.` });
+    }
+    screen.name = trimmed;
+    return wait(screenOut(screen));
+  }
+
+  function deleteScreen(screenId) {
+    const screen = screenById(screenId);
+    if (!screen) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    const assignedSomewhere = Object.values(screenAssignments).some(a => Object.values(a).includes(screen.id));
+    if (assignedSomewhere) return fail(400, { detail: 'This screen is still assigned to a project. Unassign it first.' });
+    screens = screens.filter(s => s.id !== screen.id);
+    screenFields = screenFields.filter(r => r.screen !== screen.id);
+    return wait(null);
+  }
+
+  function addScreenField(screenId, fieldId, required) {
+    const screen = screenById(screenId);
+    const field = fieldById(fieldId);
+    if (!screen || !field) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    if (screenFields.some(r => r.screen === screen.id && r.field === field.id)) {
+      return fail(400, { field: 'This field is already on this screen.' });
+    }
+    const siblings = screenFieldsFor(screen.id);
+    screenFields.push({
+      id: ++nextScreenFieldId, screen: screen.id, field: field.id,
+      required: !!required, position: siblings.length,
+    });
+    return wait(screenOut(screen));
+  }
+
+  function setScreenFieldRequired(screenId, rowId, required) {
+    const screen = screenById(screenId);
+    const row = screenFields.find(r => r.id === Number(rowId) && r.screen === Number(screenId));
+    if (!screen || !row) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    row.required = !!required;
+    return wait(screenOut(screen));
+  }
+
+  function moveScreenField(screenId, rowId, fields) {
+    const screen = screenById(screenId);
+    const row = screenFields.find(r => r.id === Number(rowId) && r.screen === Number(screenId));
+    if (!screen || !row) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    if ('position' in fields) row.position = Number(fields.position);
+    return wait(screenOut(screen));
+  }
+
+  function removeScreenField(screenId, rowId) {
+    const screen = screenById(screenId);
+    const row = screenFields.find(r => r.id === Number(rowId) && r.screen === Number(screenId));
+    if (!screen || !row) return fail(404, { detail: 'Not found.' });
+    if (!Logic.canManageDefinitions(myRoles())) {
+      return fail(403, { detail: "You don't have permission to manage screens." });
+    }
+    screenFields = screenFields.filter(r => r.id !== row.id);
+    screenFieldsFor(screen.id).forEach((r, i) => { r.position = i; });
+    return wait(screenOut(screen));
+  }
+
+  /* ---- screen assignments -------------------------------------------------- */
+
+  function listScreenAssignments(projectId) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    if (!myRole(projectId)) return denied();
+    return wait(Object.assign({}, assignmentsForProject(projectId)));
+  }
+
+  function setScreenAssignments(projectId, assignments) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (projectById(projectId).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageScreenAssignments(role)) {
+      return fail(403, { detail: "You don't have permission to manage this project's field screens." });
+    }
+    const current = assignmentsForProject(projectId);
+    for (const itemType of Object.keys(assignments)) {
+      const screenId = assignments[itemType];
+      if (screenId !== null && !screenById(screenId)) {
+        return fail(400, { detail: `Screen ${screenId} does not exist.` });
+      }
+      current[itemType] = screenId;
+    }
+    return wait(Object.assign({}, current));
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1044,6 +1376,11 @@ const Store = (() => {
     listComponents, createComponent, renameComponent, deleteComponent,
     listLinks, createLink, deleteLink,
     listLabels, renameLabel, recolorLabel, deleteLabel,
+    listFields, createField, getField, renameField, deleteField,
+    addFieldOption, renameFieldOption, moveFieldOption, deleteFieldOption,
+    listScreens, createScreen, getScreen, renameScreen, deleteScreen,
+    addScreenField, setScreenFieldRequired, moveScreenField, removeScreenField,
+    listScreenAssignments, setScreenAssignments,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
   };

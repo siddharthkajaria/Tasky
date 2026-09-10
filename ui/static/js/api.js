@@ -136,5 +136,33 @@ const Api = (() => {
     deleteLabel:  (id)           => request(`/api/labels/${id}/`, { method: 'DELETE' }),
 
     myTasks:   () => request('/api/me/tasks/'),
+
+    /* Custom fields --------------------------------------------------------- */
+    listFields:  ()             => request('/api/fields/'),
+    createField: (fields)       => request('/api/fields/', { method: 'POST', body: fields }),
+    getField:    (id)           => request(`/api/fields/${id}/`),
+    renameField: (id, name)     => request(`/api/fields/${id}/`, { method: 'PATCH', body: { name } }),
+    deleteField: (id)           => request(`/api/fields/${id}/`, { method: 'DELETE' }),
+
+    addFieldOption:    (fieldId, label)            => request(`/api/fields/${fieldId}/options/`, { method: 'POST', body: { label } }),
+    renameFieldOption: (fieldId, optionId, label)  => request(`/api/fields/${fieldId}/options/${optionId}/`, { method: 'PATCH', body: { label } }),
+    moveFieldOption:   (fieldId, optionId, fields) => request(`/api/fields/${fieldId}/options/${optionId}/`, { method: 'PATCH', body: fields }),
+    deleteFieldOption: (fieldId, optionId)         => request(`/api/fields/${fieldId}/options/${optionId}/`, { method: 'DELETE' }),
+
+    /* Screens ----------------------------------------------------------- */
+    listScreens:  ()          => request('/api/screens/'),
+    createScreen: (name)      => request('/api/screens/', { method: 'POST', body: { name } }),
+    getScreen:    (id)        => request(`/api/screens/${id}/`),
+    renameScreen: (id, name)  => request(`/api/screens/${id}/`, { method: 'PATCH', body: { name } }),
+    deleteScreen: (id)        => request(`/api/screens/${id}/`, { method: 'DELETE' }),
+
+    addScreenField:         (screenId, fieldId, required) => request(`/api/screens/${screenId}/fields/`, { method: 'POST', body: { field: fieldId, required: !!required } }),
+    setScreenFieldRequired: (screenId, rowId, required)   => request(`/api/screens/${screenId}/fields/${rowId}/`, { method: 'PATCH', body: { required } }),
+    moveScreenField:        (screenId, rowId, fields)     => request(`/api/screens/${screenId}/fields/${rowId}/`, { method: 'PATCH', body: fields }),
+    removeScreenField:      (screenId, rowId)             => request(`/api/screens/${screenId}/fields/${rowId}/`, { method: 'DELETE' }),
+
+    /* Per-project screen assignments ------------------------------------ */
+    listScreenAssignments: (projectId)              => request(`/api/projects/${projectId}/screen-assignments/`),
+    setScreenAssignments:  (projectId, assignments) => request(`/api/projects/${projectId}/screen-assignments/`, { method: 'PUT', body: assignments }),
   };
 })();
