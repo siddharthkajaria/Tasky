@@ -133,8 +133,6 @@ Reordering has no dedicated endpoint — `PATCH {position}` is how the spec expo
 In `ui/static/js/store.js`, the existing status helpers (around line 80-101: `seedDefaultStatuses`, `statusesForProject`, `statusById`, `defaultStatusId`) already give everything needed. Add these functions right after `listStatuses` (which currently ends at line 465, just before `/* ---- work items ------------------------------------------------------ */`):
 
 ```javascript
-  let nextStatusIdCounter = nextStatusId;   // seedDefaultStatuses already advances nextStatusId as it seeds
-
   function createStatus(projectId, fields) {
     if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
     const role = myRole(projectId);
@@ -146,7 +144,12 @@ In `ui/static/js/store.js`, the existing status helpers (around line 80-101: `se
     }
     const siblings = statusesForProject(projectId);
     const status = {
-      id: ++nextStatusIdCounter, project: Number(projectId),
+      // Reuses the single shared `nextStatusId` counter `seedDefaultStatuses`
+      // already advances on every project creation — a second, forked
+      // counter here would diverge from it over time (each project created
+      // after this file loads bumps the real counter but not a snapshot
+      // taken once at module load) and eventually assign a duplicate id.
+      id: ++nextStatusId, project: Number(projectId),
       name: fields.name.trim(), category: fields.category, position: siblings.length,
     };
     statuses.push(status);
