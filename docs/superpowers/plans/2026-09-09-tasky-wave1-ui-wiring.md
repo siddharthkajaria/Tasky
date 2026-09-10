@@ -3172,7 +3172,15 @@ Add a shared validator, right above `createWorkItem` (before its current definit
   /* Validates `payload.custom_fields` against the assigned screen for
      `itemType` in `projectId`. Returns `{ value, error }` — `error` is
      `{ custom_fields: <message-or-per-field-object> }` on failure, matching
-     the shape docs/api.md documents for the real endpoint's 400 body. */
+     the shape docs/api.md documents for the real endpoint's 400 body: a
+     bare string only when no screen is assigned; a `{fieldId: message}`
+     dict for every other failure (not-on-screen, required, type error) —
+     mirrors `boards/services.py`'s `custom_fields_write_error` exactly,
+     including validating against the MERGED (existing + newly-submitted)
+     value per field, not the raw payload alone — a partial PATCH that
+     doesn't touch an already-satisfied required field must not re-reject
+     it (`boards/services.py:581`: `value = payload[key] if key in payload
+     else existing_map.get(key)`). */
   function validateCustomFields(projectId, itemType, rawValues, currentValues) {
     const assignments = assignmentsForProject(projectId);
     const screenId = assignments[itemType];
@@ -3187,27 +3195,27 @@ Add a shared validator, right above `createWorkItem` (before its current definit
     const rows = screenFieldsFor(screen.id).map(r => ({ field: fieldById(r.field), required: r.required }));
     const onScreenIds = new Set(rows.map(r => r.field.id));
 
+    const stray = {};
     for (const key of Object.keys(rawValues || {})) {
       if (!onScreenIds.has(Number(key))) {
         const field = fieldById(key);
-        return { error: { custom_fields: `"${field ? field.name : key}" isn't on the "${screen.name}" screen.` } };
+        stray[key] = `"${field ? field.name : key}" isn't on the "${screen.name}" screen.`;
       }
     }
-
-    const contextFor = (field) => ({
-      optionIds: optionsForField(field.id).map(o => o.id),
-      memberIds: memberships.filter(m => m.project === Number(projectId)).map(m => m.user),
-    });
-    const errors = Logic.screenValueErrors(rows, rawValues, contextFor);
-    if (Object.keys(errors).length) {
-      const firstFieldId = Object.keys(errors)[0];
-      return { error: { custom_fields: errors[firstFieldId] } };
-    }
+    if (Object.keys(stray).length) return { error: { custom_fields: stray } };
 
     const merged = Object.assign({}, currentValues || {});
     rows.forEach(r => {
       if (rawValues && r.field.id in rawValues) merged[r.field.id] = rawValues[r.field.id];
     });
+
+    const contextFor = (field) => ({
+      optionIds: optionsForField(field.id).map(o => o.id),
+      memberIds: memberships.filter(m => m.project === Number(projectId)).map(m => m.user),
+    });
+    const errors = Logic.screenValueErrors(rows, merged, contextFor);
+    if (Object.keys(errors).length) return { error: { custom_fields: errors } };
+
     return { value: merged };
   }
 ```
@@ -4287,15 +4295,32 @@ function clearCustomFieldErrors(scope) {
   scope.querySelectorAll('.cf-field.has-error').forEach(el => el.classList.remove('has-error'));
 }
 
-function applyCustomFieldErrors(scope, message) {
+function applyCustomFieldErrors(scope, errors) {
   clearCustomFieldErrors(scope);
-  // The server (and the mock, mirroring it) returns one message under
-  // `custom_fields` for the FIRST problem found, not a per-field map — see
-  // docs/api.md's `{"custom_fields": <message>}` shape. Shown as a form-
-  // level error rather than pinned under one control, since we don't
-  // reliably know which field id it names without parsing the message.
-  const errorEl = scope.querySelector('[data-error]') || scope.querySelector('.form-error');
-  if (errorEl) { errorEl.textContent = message; errorEl.hidden = false; }
+  // `err.data.custom_fields` is EITHER a bare string (only the
+  // "no screen assigned" case) OR a `{fieldId: message}` dict for every
+  // other failure (not-on-screen, required, type error) — see
+  // docs/api.md's "Work Items — custom_fields" section and
+  // boards/services.py's custom_fields_write_error, which the mock in
+  // Task 5.2 mirrors exactly. A string is a form-level error (no single
+  // field to pin it to); a dict is pinned per field, under the
+  // `[data-cf-error="<fieldId>"]` span customFieldControl already
+  // renders for each control.
+  if (typeof errors === 'string') {
+    const errorEl = scope.querySelector('[data-error]') || scope.querySelector('.form-error');
+    if (errorEl) { errorEl.textContent = errors; errorEl.hidden = false; }
+    return;
+  }
+  Object.keys(errors || {}).forEach(fieldId => {
+    const el = scope.querySelector(`[data-cf-error="${fieldId}"]`);
+    if (!el) return;
+    el.textContent = errors[fieldId];
+    el.hidden = false;
+    const wrap = scope.querySelector(`[data-cf-wrap="${fieldId}"]`);
+    if (wrap) wrap.classList.add('has-error');
+  });
+  const first = scope.querySelector('.cf-field.has-error');
+  if (first) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 ```
