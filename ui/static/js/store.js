@@ -86,13 +86,21 @@ const Store = (() => {
      `docs/api.md` documents for the real endpoint, including the "two
      names differing only by case collapse to one" and "blank name fails
      the whole write" rules. Returns `{ ids, error }`; `error` is set (and
-     `ids` is empty) on the first blank name found. */
+     `ids` is empty) if any name in the list is blank.
+     Validates the WHOLE list for blanks in a first pass, before creating
+     anything — otherwise a genuinely-new name earlier in the array would
+     get pushed into `labels` before a later blank name triggers the
+     rejection, leaving a stray label behind on a request that should have
+     failed atomically. */
   function resolveLabelNames(names) {
+    const list = names || [];
+    if (list.some(raw => !String(raw).trim())) {
+      return { ids: [], error: { labels: "A label name can't be blank." } };
+    }
     const seen = new Set();
     const ids = [];
-    for (const raw of names || []) {
+    for (const raw of list) {
       const trimmed = String(raw).trim();
-      if (!trimmed) return { ids: [], error: { labels: "A label name can't be blank." } };
       const key = trimmed.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
