@@ -47,6 +47,7 @@
     <nav class="nav">
       <a href="#/projects" data-nav="projects">Projects</a>
       <a href="#/my-tasks" data-nav="my-tasks">My tasks</a>
+      <a href="#/labels" data-nav="labels">Labels</a>
     </nav>
     <div class="topbar-end">
       <span class="who" data-who></span>
@@ -166,6 +167,18 @@
       <p class="page-sub">Everything open and assigned to you, across every project, soonest due first.</p>
     </div>
     <ul class="task-list" data-list></ul>
+  </div>
+</template>
+
+<template id="tpl-labels">
+  <div class="page page-narrow">
+    <div class="page-head">
+      <h1>Labels</h1>
+      <p class="page-sub">Global — the same list, shared and reused across every project. Anyone tags a work item with a new label right on the item; there's no "create" button here. Owners of any project can rename, recolor, or delete one from this list.</p>
+    </div>
+    <p class="locked-note" data-locked hidden></p>
+
+    <ul class="label-admin-list" data-list></ul>
   </div>
 </template>
 

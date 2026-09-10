@@ -196,6 +196,8 @@ async function route() {
 
   if (hash === '/my-tasks') { setActiveNav('my-tasks'); return viewMyTasks(); }
 
+  if (hash === '/labels') { setActiveNav('labels'); return viewLabels(); }
+
   setActiveNav('projects');
   viewProjects();
 }
@@ -1592,6 +1594,168 @@ function taskRow(item) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
   });
   return li;
+}
+
+/* Labels admin (sub-project 4) ------------------------------------------ */
+
+function isOwnerOfAnyProject(projects) {
+  return (projects || []).some(p => p.my_role === 'owner');
+}
+
+async function viewLabels() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-labels'));
+
+  const list = main.querySelector('[data-list]');
+  const locked = main.querySelector('[data-locked]');
+  list.innerHTML = skeletonList(3);
+
+  let projects;
+  try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
+  const canManage = isOwnerOfAnyProject(projects);
+
+  if (!canManage) {
+    locked.hidden = false;
+    locked.textContent =
+      'Only a project Owner can rename, recolor or delete a label — Owner of any project counts. ' +
+      'Anyone can still apply an existing label, or create a new one, right on a work item.';
+  }
+
+  await paintLabels(list, canManage);
+}
+
+async function paintLabels(list, canManage) {
+  list.innerHTML = skeletonList(3);
+  try {
+    const labels = await data.listLabels();
+    if (!labels.length) {
+      list.innerHTML = '<li class="empty">No labels yet. Type one onto a work item to create it.</li>';
+      return;
+    }
+    const rows = labels.map(l => labelRow(l, list, canManage));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => paintLabels(list, canManage));
+  }
+}
+
+function labelRow(label, list, canManage) {
+  const li = document.createElement('li');
+  li.className = 'label-admin-row';
+
+  li.innerHTML =
+    (canManage
+      ? `<button class="swatch-btn" data-swatch style="background:${esc(label.color)}" aria-label="Change color" type="button"></button>`
+      : `<span class="swatch" style="background:${esc(label.color)}"></span>`) +
+    `<span class="name" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(label.name)}</span>` +
+    (canManage ? `<span class="actions"><button class="btn btn-danger" data-delete>Delete</button></span>` : '');
+
+  const nameEl = li.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      if (e.key === 'Escape') { nameEl.textContent = label.name; nameEl.blur(); }
+    });
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === label.name) { nameEl.textContent = label.name; return; }
+      try {
+        await data.renameLabel(label.id, value);
+        label.name = value;
+        toast('Label renamed');
+      } catch (err) {
+        nameEl.textContent = label.name;
+        handle(err);
+      }
+    });
+  }
+
+  const swatchBtn = li.querySelector('[data-swatch]');
+  if (swatchBtn) {
+    swatchBtn.addEventListener('click', async () => {
+      const options = Logic.LABEL_PALETTE;
+      const next = options[(options.indexOf(label.color) + 1) % options.length];
+      try {
+        await data.recolorLabel(label.id, next);
+        label.color = next;
+        swatchBtn.style.background = next;
+      } catch (err) { handle(err); }
+    });
+  }
+
+  const deleteBtn = li.querySelector('[data-delete]');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete "${label.name}"? It comes off every work item using it.`)) return;
+      try {
+        await data.deleteLabel(label.id);
+        toast(`"${label.name}" deleted`);
+        await paintLabels(list, true);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  return li;
+}
+
+/* Label chip-input — a reusable widget for the work item create form and
+   detail modal (wired into both in Task 2.4). Free-text: press Enter or
+   "," to turn the current input value into a chip, backed by a
+   <datalist> of existing label names for autocomplete. Names, not ids —
+   the server resolves each one to a Label (creating it if new) on save. */
+function labelChipInput(initialNames, allLabels) {
+  const names = (initialNames || []).slice();
+  const wrap = document.createElement('div');
+  wrap.className = 'label-input-block';
+
+  const datalistId = `label-options-${Math.random().toString(36).slice(2)}`;
+  wrap.innerHTML =
+    `<div class="label-chip-list" data-chips></div>` +
+    `<input type="text" class="label-input" list="${datalistId}" placeholder="Add a label…" aria-label="Add a label">` +
+    `<datalist id="${datalistId}">${
+      (allLabels || []).map(l => `<option value="${esc(l.name)}">`).join('')
+    }</datalist>`;
+
+  const chipList = wrap.querySelector('[data-chips]');
+  const input = wrap.querySelector('.label-input');
+
+  function colorFor(name) {
+    const match = (allLabels || []).find(l => l.name.toLowerCase() === name.toLowerCase());
+    return match ? match.color : Logic.colorForLabelName(name);
+  }
+
+  function paintChips() {
+    chipList.replaceChildren(...names.map(name => {
+      const chip = document.createElement('span');
+      chip.className = 'label-chip';
+      chip.style.background = colorFor(name);
+      chip.innerHTML = `${esc(name)}<button type="button" data-remove aria-label="Remove ${esc(name)}">×</button>`;
+      chip.querySelector('[data-remove]').addEventListener('click', () => {
+        const i = names.indexOf(name);
+        if (i !== -1) names.splice(i, 1);
+        paintChips();
+      });
+      return chip;
+    }));
+  }
+
+  function addFromInput() {
+    const clean = input.value.trim();
+    input.value = '';
+    if (!clean) return;
+    if (!names.some(n => n.toLowerCase() === clean.toLowerCase())) names.push(clean);
+    paintChips();
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addFromInput(); }
+  });
+  input.addEventListener('blur', addFromInput);
+
+  paintChips();
+  return { el: wrap, getNames: () => names.slice() };
 }
 
 boot();
