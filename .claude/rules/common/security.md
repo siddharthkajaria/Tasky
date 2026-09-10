@@ -46,4 +46,3 @@ Tracked in `docs/follow-ups.md` and `docs/dev-credentials.md`:
 - The login endpoint is not CSRF-protected and has no throttling.
 - Assignee is not validated against project membership.
 - Custom fields and screens are readable by any authenticated user.
-- Project archiving is visibility-only, not a write-block.

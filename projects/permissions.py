@@ -62,7 +62,15 @@ class ProjectNotArchived(BasePermission):
     etc. would become unreachable the moment a project is archived, and an
     archived project could never be reversed. See boards/views.py for where
     each nested viewset's `initial()` override already resolves the right
-    object (a Project, a Board, or the row itself) for this to check."""
+    object (a Project, a Board, or the row itself) for this to check.
+
+    Object-level only: it never fires for a flat POST whose parent comes
+    from the request body rather than the URL (no object exists yet for
+    DRF to resolve), so BoardViewSet.perform_create and
+    WorkItemViewSet.perform_create each carry their own explicit guard
+    instead. Adding this class to a future flat-collection viewset's
+    permission_classes is not enough on its own — check whether its
+    create path needs the same explicit guard."""
 
     message = "This project is archived and read-only. Unarchive it first."
 
