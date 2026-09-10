@@ -875,6 +875,7 @@ async function viewProject(projectId) {
   renderBoards(main, project);
   renderComponents(main, project);
   renderStatuses(main, project);
+  renderScreenAssignments(main, project);
   renderMembers(main, project);
 }
 
@@ -1202,6 +1203,68 @@ function statusRow(status, i, all, main, project) {
         toast('Status renamed');
       } catch (err) {
         labelEl.textContent = status.name;
+        handle(err);
+      }
+    });
+  }
+  return li;
+}
+
+/* Per-project screen assignment (sub-project 2b) --------------------------
+   One row per work item type. "None" is a real, common answer — it means
+   the type keeps exactly the built-in fields it had before 2b existed. */
+
+async function renderScreenAssignments(main, project) {
+  const list = main.querySelector('[data-assignments]');
+  if (!list) return;
+  list.innerHTML = skeletonList(5);
+  const canEdit = Logic.canManageScreenAssignments(project.my_role);
+
+  try {
+    const [assignments, allScreens] = await Promise.all([
+      data.listScreenAssignments(project.id),
+      data.listScreens(),
+    ]);
+
+    if (!allScreens.length) {
+      list.innerHTML = '<li class="empty">No screens exist yet. Build one under <a href="#/screens">Screens</a> and every work item type here can point at it.</li>';
+      return;
+    }
+
+    const rows = Logic.ITEM_TYPES.map(t => assignmentRow(t, assignments[t], allScreens, project, canEdit, main));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => renderScreenAssignments(main, project));
+  }
+}
+
+function assignmentRow(itemType, screenId, allScreens, project, canEdit, main) {
+  const li = document.createElement('li');
+  li.className = 'assign-row';
+  const screenName = screenId ? (allScreens.find(s => s.id === screenId) || {}).name : null;
+
+  li.innerHTML =
+    `<span class="type-badge type-${itemType}">${esc(Logic.ITEM_TYPE_LABEL[itemType])}</span>` +
+    (canEdit
+      ? `<select class="assign-select" data-screen aria-label="Screen for ${esc(Logic.ITEM_TYPE_LABEL[itemType])}">` +
+          `<option value="">None — built-in fields only</option>` +
+          allScreens.map(s => `<option value="${s.id}" ${screenId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('') +
+        `</select>`
+      : `<span class="assign-value ${screenId ? '' : 'is-none'}">${esc(screenName || 'None')}</span>`);
+
+  const select = li.querySelector('[data-screen]');
+  if (select) {
+    const previous = screenId ? String(screenId) : '';
+    select.addEventListener('change', async () => {
+      const chosenName = select.options[select.selectedIndex].textContent;
+      try {
+        await data.setScreenAssignments(project.id, { [itemType]: select.value ? Number(select.value) : null });
+        toast(select.value ? `${Logic.ITEM_TYPE_LABEL[itemType]}s now use "${chosenName}"` : `${Logic.ITEM_TYPE_LABEL[itemType]}s use built-in fields only`);
+        await renderScreenAssignments(main, project);
+      } catch (err) {
+        select.value = previous;
         handle(err);
       }
     });

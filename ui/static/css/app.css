@@ -1125,3 +1125,34 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .req-toggle:hover { border-color: var(--ink-3); }
 .req-toggle.is-on { border-color: var(--accent); background: var(--accent-w); color: var(--accent); }
 .req-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+/* Per-project screen assignment (sub-project 2b) ----------------------- */
+
+.assign-list { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 6px; }
+.assign-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 9px 14px;
+  animation: row-in .22s var(--ease-out) both;
+  transition: border-color .12s ease;
+}
+.assign-row:hover { border-color: var(--rule-2); }
+.assign-row .type-badge { width: 66px; text-align: center; }
+.assign-row .assign-meta { color: var(--ink-3); font-size: 11px; flex: 1; }
+.assign-row .assign-value { font-weight: 500; }
+.assign-row .assign-value.is-none { font-weight: 400; color: var(--ink-3); }
+.assign-select {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 5px 8px;
+  font-size: 12px;
+  min-width: 190px;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+.assign-select:hover { border-color: var(--ink-3); background: var(--sunk); }
