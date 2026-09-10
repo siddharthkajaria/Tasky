@@ -541,6 +541,7 @@ const Store = (() => {
     if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
     const role = myRole(projectId);
     if (!role) return denied();
+    if (projectById(projectId).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
     if (!Logic.canManageStatuses(role)) return fail(403, { detail: "You don't have permission to manage statuses." });
     if (!fields.name || !fields.name.trim()) return fail(400, { name: 'This field may not be blank.' });
     if (!Logic.CATEGORIES.includes(fields.category)) {
@@ -560,6 +561,7 @@ const Store = (() => {
     if (!status || status.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
     const role = myRole(status.project);
     if (!role) return denied();
+    if (projectById(status.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
     if (!Logic.canManageStatuses(role)) return fail(403, { detail: "You don't have permission to manage statuses." });
 
     if ('category' in fields && fields.category !== status.category) {
@@ -586,6 +588,7 @@ const Store = (() => {
     if (!status || status.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
     const role = myRole(status.project);
     if (!role) return denied();
+    if (projectById(status.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
     if (!Logic.canManageStatuses(role)) return fail(403, { detail: "You don't have permission to manage statuses." });
 
     const inUse = workItems.filter(w => w.status === status.id).length;
