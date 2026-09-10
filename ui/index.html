@@ -49,6 +49,7 @@
       <a href="#/my-tasks" data-nav="my-tasks">My tasks</a>
       <a href="#/labels" data-nav="labels">Labels</a>
       <a href="#/fields" data-nav="fields">Fields</a>
+      <a href="#/screens" data-nav="screens">Screens</a>
     </nav>
     <div class="topbar-end">
       <span class="who" data-who></span>
@@ -200,6 +201,24 @@
       <button class="btn btn-primary" type="submit">Add field</button>
     </form>
     <p class="hint" data-type-hint hidden></p>
+    <p class="form-error" data-create-error hidden></p>
+    <p class="locked-note" data-locked hidden></p>
+
+    <ul class="admin-list" data-list></ul>
+  </div>
+</template>
+
+<template id="tpl-screens">
+  <div class="page page-narrow">
+    <div class="page-head">
+      <h1>Screens</h1>
+      <p class="page-sub">An ordered set of custom fields. A project points each work item type at one of these.</p>
+    </div>
+
+    <form class="create-screen" data-create-screen novalidate hidden>
+      <input name="name" placeholder="Screen name" aria-label="Screen name" required>
+      <button class="btn btn-primary" type="submit">Add screen</button>
+    </form>
     <p class="form-error" data-create-error hidden></p>
     <p class="locked-note" data-locked hidden></p>
 

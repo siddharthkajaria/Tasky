@@ -1094,3 +1094,24 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .archived-toggle { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; font-size: 13px; color: var(--ink-2); }
 
 .role-badge.is-inactive { color: var(--danger); border-color: var(--danger); background: var(--danger-w); }
+
+.req-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--rule-2);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .12s ease, background .12s ease, color .12s ease;
+}
+.req-toggle:hover { border-color: var(--ink-3); }
+.req-toggle.is-on { border-color: var(--accent); background: var(--accent-w); color: var(--accent); }
+.req-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }

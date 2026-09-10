@@ -196,6 +196,8 @@ async function route() {
 
   if (hash === '/my-tasks') { setActiveNav('my-tasks'); return viewMyTasks(); }
 
+  if (hash === '/screens') { setActiveNav('screens'); return viewScreens(); }
+
   if (hash === '/fields') { setActiveNav('fields'); return viewFields(); }
 
   if (hash === '/labels') { setActiveNav('labels'); return viewLabels(); }
@@ -596,6 +598,228 @@ async function openFieldOptionsModal(fieldId, canManage, onChange) {
         field = await data.addFieldOption(field.id, input.value);
         input.value = '';
         input.focus();
+        paint();
+        if (onChange) onChange();
+      } catch (err) { showError(err); }
+    });
+  }
+
+  paint();
+}
+
+/* Screens admin (sub-project 2b) ------------------------------------------ */
+
+async function viewScreens() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-screens'));
+
+  const list = main.querySelector('[data-list]');
+  const form = main.querySelector('[data-create-screen]');
+  const errorEl = main.querySelector('[data-create-error]');
+  const locked = main.querySelector('[data-locked]');
+  list.innerHTML = skeletonList(2);
+
+  let projects;
+  try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
+  const canManage = isOwnerOfAnyProject(projects);
+
+  if (canManage) {
+    form.hidden = false;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      const input = form.querySelector('[name=name]');
+      try {
+        const screen = await data.createScreen(input.value);
+        input.value = '';
+        toast(`"${screen.name}" added`);
+        await paintScreens(list, true);
+        openScreenFieldsModal(screen.id, true, () => paintScreens(list, true));
+      } catch (err) {
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+      }
+    });
+  } else {
+    locked.hidden = false;
+    locked.textContent =
+      'Only a project Owner can add or change screens — Owner of any project counts. ' +
+      'Assigning one of these to a work item type is a per-project job, done on the project page.';
+  }
+
+  await paintScreens(list, canManage);
+}
+
+async function paintScreens(list, canManage) {
+  list.innerHTML = skeletonList(2);
+  try {
+    const screens = await data.listScreens();
+    if (!screens.length) {
+      list.innerHTML = canManage
+        ? '<li class="empty">No screens yet. Name one above, then add fields to it.</li>'
+        : '<li class="empty">No screens have been created yet.</li>';
+      return;
+    }
+    const rows = screens.map(s => screenRow(s, list, canManage));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => paintScreens(list, canManage));
+  }
+}
+
+function screenRow(screen, list, canManage) {
+  const li = document.createElement('li');
+  li.className = 'admin-row';
+  const required = screen.fields.filter(f => f.required).length;
+  const meta = `${screen.fields.length} field${screen.fields.length === 1 ? '' : 's'}${required ? `, ${required} required` : ''}`;
+
+  li.innerHTML =
+    `<span class="name" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(screen.name)}</span>` +
+    `<span class="row-meta">${esc(meta)}</span>` +
+    `<span class="actions">` +
+      `<button class="btn" data-fields>Fields</button>` +
+      (canManage ? `<button class="btn btn-danger" data-delete>Delete</button>` : '') +
+    `</span>`;
+
+  const nameEl = li.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      if (e.key === 'Escape') { nameEl.textContent = screen.name; nameEl.blur(); }
+    });
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === screen.name) { nameEl.textContent = screen.name; return; }
+      try {
+        await data.renameScreen(screen.id, value);
+        screen.name = value;
+        toast('Screen renamed');
+        await paintScreens(list, canManage);
+      } catch (err) {
+        nameEl.textContent = screen.name;
+        handle(err);
+      }
+    });
+  }
+
+  li.querySelector('[data-fields]').addEventListener('click', () => openScreenFieldsModal(screen.id, canManage, () => paintScreens(list, canManage)));
+
+  const deleteBtn = li.querySelector('[data-delete]');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      try {
+        await data.deleteScreen(screen.id);
+        toast(`"${screen.name}" deleted`);
+        await paintScreens(list, canManage);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  return li;
+}
+
+/* A screen's ordered field list, with the per-screen `required` toggle. */
+async function openScreenFieldsModal(screenId, canManage, onChange) {
+  let screen, allFields;
+  try {
+    [screen, allFields] = await Promise.all([data.getScreen(screenId), data.listFields()]);
+  } catch (err) { return handle(err); }
+
+  const body =
+    `<div class="modal-head">` +
+      `<p class="eyebrow">Screen · ${esc(screen.name)}</p>` +
+      `<button class="btn btn-quiet" type="button" data-close>Close</button>` +
+    `</div>` +
+    `<p class="hint">This order is the order the fields appear on the work item form. <strong>Required</strong> is per screen — the same field can be required here and optional on another screen.</p>` +
+    `<ul class="order-list" data-fields></ul>` +
+    `<p class="form-error" data-error hidden></p>` +
+    (canManage
+      ? `<form class="add-row" data-add novalidate>` +
+          `<select name="field" aria-label="Field to add" data-add-select></select>` +
+          `<button class="btn" type="submit">Add field</button>` +
+        `</form>`
+      : `<p class="hint">Only a project Owner can change these.</p>`);
+
+  const { modal } = openModal(body);
+  const listEl = modal.querySelector('[data-fields]');
+  const errorEl = modal.querySelector('[data-error]');
+  const addForm = modal.querySelector('[data-add]');
+  const addSelect = modal.querySelector('[data-add-select]');
+  const clearError = () => { errorEl.hidden = true; };
+  const showError = (err) => { errorEl.textContent = errorText(err); errorEl.hidden = false; };
+
+  function paint() {
+    if (!screen.fields.length) {
+      listEl.innerHTML = '<li class="empty-inline">No fields on this screen yet. Until there are, assigning it to a work item type changes nothing.</li>';
+    } else {
+      listEl.replaceChildren(...screen.fields.map(screenFieldRow));
+    }
+
+    if (addSelect) {
+      const onScreen = new Set(screen.fields.map(r => r.field.id));
+      const available = allFields.filter(f => !onScreen.has(f.id));
+      addSelect.replaceChildren(...available.map(f => new Option(`${f.name} · ${Logic.FIELD_TYPE_LABEL[f.field_type]}`, f.id)));
+      const none = !available.length;
+      addSelect.disabled = none;
+      addForm.querySelector('button').disabled = none;
+      if (none) addSelect.replaceChildren(new Option('Every custom field is already on this screen'));
+    }
+  }
+
+  function screenFieldRow(row, i) {
+    const last = i === screen.fields.length - 1;
+    const li = document.createElement('li');
+    li.className = 'order-row';
+    li.innerHTML =
+      (canManage
+        ? `<span class="order-handle">` +
+            `<button class="icon-btn" data-up ${i === 0 ? 'disabled' : ''} aria-label="Move up" type="button">▲</button>` +
+            `<button class="icon-btn" data-down ${last ? 'disabled' : ''} aria-label="Move down" type="button">▼</button>` +
+          `</span>`
+        : '') +
+      `<span class="pos-index">${i + 1}</span>` +
+      `<span class="label">${esc(row.field_detail.name)}</span>` +
+      `<span class="type-badge ft">${esc(Logic.FIELD_TYPE_LABEL[row.field_detail.field_type])}</span>` +
+      (canManage
+        ? `<label class="req-toggle ${row.required ? 'is-on' : ''}" data-required>` +
+            `<input type="checkbox" ${row.required ? 'checked' : ''}>Required</label>`
+        : `<span class="req-toggle ${row.required ? 'is-on' : ''}">${row.required ? 'Required' : 'Optional'}</span>`) +
+      (canManage ? `<button class="btn btn-danger" data-remove type="button">Remove</button>` : '');
+
+    const run = async (fn) => {
+      clearError();
+      try {
+        screen = await fn();
+        paint();
+        if (onChange) onChange();
+      } catch (err) { showError(err); }
+    };
+
+    const up = li.querySelector('[data-up]');
+    if (up) up.addEventListener('click', () => run(() => data.moveScreenField(screen.id, row.id, { position: screen.fields[i - 1].position })
+      .then(() => data.moveScreenField(screen.id, screen.fields[i - 1].id, { position: row.position }))
+      .then(() => data.getScreen(screen.id))));
+    const down = li.querySelector('[data-down]');
+    if (down) down.addEventListener('click', () => run(() => data.moveScreenField(screen.id, row.id, { position: screen.fields[i + 1].position })
+      .then(() => data.moveScreenField(screen.id, screen.fields[i + 1].id, { position: row.position }))
+      .then(() => data.getScreen(screen.id))));
+    const remove = li.querySelector('[data-remove]');
+    if (remove) remove.addEventListener('click', () => run(() => data.removeScreenField(screen.id, row.id)));
+
+    const toggle = li.querySelector('[data-required] input');
+    if (toggle) toggle.addEventListener('change', () => run(() => data.setScreenFieldRequired(screen.id, row.id, toggle.checked)));
+    return li;
+  }
+
+  if (addForm) {
+    addForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!addSelect.value) return;
+      clearError();
+      try {
+        screen = await data.addScreenField(screen.id, Number(addSelect.value));
         paint();
         if (onChange) onChange();
       } catch (err) { showError(err); }
