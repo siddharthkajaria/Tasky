@@ -246,11 +246,12 @@ async function viewProjects() {
     errorEl.hidden = true;
     const name = e.target.querySelector('[name=name]').value;
     const key = e.target.querySelector('[name=key]').value;
+    const template = e.target.querySelector('[name=template]').value;
     if (!name.trim() || !key.trim()) return;
 
     btn.disabled = true;
     try {
-      const project = await data.createProject({ name, key });
+      const project = await data.createProject({ name, key, template });
       toast('Project created');
       location.hash = `#/projects/${project.id}`;
     } catch (err) {
@@ -260,6 +261,24 @@ async function viewProjects() {
       btn.disabled = false;
     }
   });
+
+  const templateSelect = main.querySelector('[data-template-select]');
+  const templatePreview = main.querySelector('[data-template-preview]');
+  function paintTemplatePreview(templates) {
+    const chosen = templates.find(t => t.key === templateSelect.value) || templates[0];
+    if (!chosen) { templatePreview.textContent = ''; return; }
+    const statusNames = chosen.statuses.map(s => s.name).join(', ');
+    const componentNote = chosen.components.length
+      ? `, and starter components: ${chosen.components.join(', ')}`
+      : ', no starter components';
+    templatePreview.textContent = `${chosen.description} Creates statuses: ${statusNames}${componentNote}.`;
+  }
+  try {
+    const templates = await data.listProjectTemplates();
+    templateSelect.replaceChildren(...templates.map(t => new Option(t.name, t.key)));
+    paintTemplatePreview(templates);
+    templateSelect.addEventListener('change', () => paintTemplatePreview(templates));
+  } catch (err) { /* the form still works with the server's own default template */ }
 
   try {
     const [invitations, projects] = await Promise.all([
