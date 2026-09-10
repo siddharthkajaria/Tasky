@@ -681,13 +681,21 @@ Add a `labels` seed array near the top of `ui/static/js/store.js`, right after t
      `docs/api.md` documents for the real endpoint, including the "two
      names differing only by case collapse to one" and "blank name fails
      the whole write" rules. Returns `{ ids, error }`; `error` is set (and
-     `ids` is empty) on the first blank name found. */
+     `ids` is empty) if any name in the list is blank.
+
+     Blank-checked in its own pass, before any label is created — creating
+     labels while scanning in one pass would let a genuinely-new name
+     earlier in the array get permanently created even when a later blank
+     name in that same array correctly fails the whole write. */
   function resolveLabelNames(names) {
+    const list = names || [];
+    if (list.some(raw => !String(raw).trim())) {
+      return { ids: [], error: { labels: "A label name can't be blank." } };
+    }
     const seen = new Set();
     const ids = [];
-    for (const raw of names || []) {
+    for (const raw of list) {
       const trimmed = String(raw).trim();
-      if (!trimmed) return { ids: [], error: { labels: "A label name can't be blank." } };
       const key = trimmed.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
