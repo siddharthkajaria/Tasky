@@ -38,10 +38,10 @@ const Store = (() => {
   /* Seeded so signing in as Asha alone walks through Owner, Admin and Member
      views without switching accounts, plus one pending invitation. */
   let projects = [
-    { id: 1, key: 'TASKY', name: 'Tasky Redesign',   description: 'The multi-project expansion itself', created_at: now() },
-    { id: 2, key: 'WEB',   name: 'Website Refresh',  description: '', created_at: now() },
-    { id: 3, key: 'CLNT',  name: 'Client Portal',    description: '', created_at: now() },
-    { id: 4, key: 'MKT',   name: 'Marketing Launch', description: '', created_at: now() },
+    { id: 1, key: 'TASKY', name: 'Tasky Redesign',   description: 'The multi-project expansion itself', created_at: now(), is_archived: false, archived_at: null, archived_by: null },
+    { id: 2, key: 'WEB',   name: 'Website Refresh',  description: '', created_at: now(), is_archived: false, archived_at: null, archived_by: null },
+    { id: 3, key: 'CLNT',  name: 'Client Portal',    description: '', created_at: now(), is_archived: false, archived_at: null, archived_by: null },
+    { id: 4, key: 'MKT',   name: 'Marketing Launch', description: '', created_at: now(), is_archived: false, archived_at: null, archived_by: null },
   ];
 
   let memberships = [
@@ -238,6 +238,7 @@ const Store = (() => {
   const projectOut = (p) => Object.assign({}, p, {
     my_role: myRole(p.id),
     member_count: memberships.filter(m => m.project === p.id).length,
+    archived_by_detail: p.archived_by ? userById(p.archived_by) : null,
   });
 
   const membershipOut = (m) => ({
@@ -304,8 +305,8 @@ const Store = (() => {
 
   /* ---- projects -------------------------------------------------------- */
 
-  const listProjects = () => wait(
-    projects.filter(p => membershipFor(p.id, me.id))
+  const listProjects = (includeArchived) => wait(
+    projects.filter(p => membershipFor(p.id, me.id) && (includeArchived || !p.is_archived))
             .sort((a, b) => a.name.localeCompare(b.name))
             .map(projectOut)
   );
@@ -348,6 +349,32 @@ const Store = (() => {
     invitations = invitations.filter(i => i.project !== project.id);
     projects = projects.filter(p => p.id !== project.id);
     return wait(null);
+  }
+
+  function archiveProject(projectId) {
+    const project = projectById(projectId);
+    if (!project) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (!Logic.canManageProjectArchive(role)) return fail(403, { detail: 'Only the owner can archive a project.' });
+    if (project.is_archived) return fail(400, { detail: 'This project is already archived.' });
+    project.is_archived = true;
+    project.archived_at = now();
+    project.archived_by = me.id;
+    return wait(projectOut(project));
+  }
+
+  function unarchiveProject(projectId) {
+    const project = projectById(projectId);
+    if (!project) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (!Logic.canManageProjectArchive(role)) return fail(403, { detail: 'Only the owner can unarchive a project.' });
+    if (!project.is_archived) return fail(400, { detail: 'This project is not archived.' });
+    project.is_archived = false;
+    project.archived_at = null;
+    project.archived_by = null;
+    return wait(projectOut(project));
   }
 
   /* ---- membership ------------------------------------------------------ */
@@ -477,6 +504,9 @@ const Store = (() => {
     if (!myRole(project.id)) {
       return fail(400, { project: 'You must be a member of this project to create a board in it.' });
     }
+    if (project.is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     if (!fields.name || !fields.name.trim()) return fail(400, { name: 'This field may not be blank.' });
 
     const board = {
@@ -594,6 +624,9 @@ const Store = (() => {
     const board = boardById(fields.board);
     if (!board) return fail(400, { board: 'Invalid pk — object does not exist.' });
     if (!myRole(board.project)) return fail(400, { board: "You must be a member of this board's project." });
+    if (projectById(board.project).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
 
     const itemType = fields.item_type || 'task';
     if (!Logic.ITEM_TYPES.includes(itemType)) return fail(400, { item_type: `"${itemType}" is not a valid choice.` });
@@ -634,6 +667,9 @@ const Store = (() => {
     const item = itemById(itemId);
     if (!item) return fail(404, { detail: 'Not found.' });
     if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
 
     if ('status' in fields && fields.status !== item.status) {
       return fail(400, { status: 'Status cannot be changed here — POST to /api/work-items/{id}/move/ instead.' });
@@ -695,6 +731,9 @@ const Store = (() => {
     const item = itemById(itemId);
     if (!item) return fail(404, { detail: 'Not found.' });
     if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
 
     // Children are orphaned, not deleted — they survive without a parent.
     workItems.forEach(w => { if (w.parent === item.id) w.parent = null; });
@@ -723,6 +762,9 @@ const Store = (() => {
     const item = itemById(itemId);
     if (!item) return fail(404, { detail: 'Not found.' });
     if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
 
     const from = item.status;
     item.status = status;
@@ -747,6 +789,9 @@ const Store = (() => {
     if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
     const role = myRole(projectId);
     if (!role) return denied();
+    if (projectById(projectId).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     if (!Logic.canManageComponents(role)) return fail(403, { detail: "You don't have permission to manage components." });
     if (!name || !name.trim()) return fail(400, { name: 'This field may not be blank.' });
     if (components.some(c => c.project === Number(projectId) && c.name === name.trim())) {
@@ -762,6 +807,9 @@ const Store = (() => {
     if (!component) return fail(404, { detail: 'Not found.' });
     const role = myRole(component.project);
     if (!role) return denied();
+    if (projectById(component.project).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     if (!Logic.canManageComponents(role)) return fail(403, { detail: "You don't have permission to manage components." });
     if (!name || !name.trim()) return fail(400, { name: 'This field may not be blank.' });
     if (components.some(c => c.project === component.project && c.name === name.trim() && c.id !== component.id)) {
@@ -776,6 +824,9 @@ const Store = (() => {
     if (!component) return fail(404, { detail: 'Not found.' });
     const role = myRole(component.project);
     if (!role) return denied();
+    if (projectById(component.project).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     if (!Logic.canManageComponents(role)) return fail(403, { detail: "You don't have permission to manage components." });
     components = components.filter(c => c.id !== component.id);
     workItems.forEach(w => { w.components = w.components.filter(cid => cid !== component.id); });
@@ -797,12 +848,18 @@ const Store = (() => {
     const item = itemById(itemId);
     if (!item) return fail(404, { detail: 'Not found.' });
     if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
 
     const other = itemById(otherId);
     if (!other) return fail(400, { item: 'Invalid pk — object does not exist.' });
     if (other.id === item.id) return fail(400, { item: "An item can't be linked to itself." });
     // Membership in BOTH sides' projects, the same AND the real API applies.
     if (!myRole(boardProject(other.board))) return denied();
+    if (projectById(boardProject(other.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     if (item.parent === other.id || other.parent === item.id) {
       return fail(400, { item: 'These items are already parent and child.' });
     }
@@ -822,6 +879,9 @@ const Store = (() => {
     const a = itemById(link.item_a);
     const b = itemById(link.item_b);
     if (!myRole(boardProject(a.board)) || !myRole(boardProject(b.board))) return denied();
+    if (projectById(boardProject(a.board)).is_archived || projectById(boardProject(b.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     links = links.filter(l => l.id !== link.id);
     return wait(null);
   }
@@ -843,6 +903,9 @@ const Store = (() => {
     const item = itemById(itemId);
     if (!item) return fail(404, { detail: 'Not found.' });
     if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     /* DRF trims the string before its own blank check runs, so a
        whitespace-only comment fails as blank rather than reaching the
        serializer's "cannot be empty" message. Same wording here. */
@@ -855,6 +918,9 @@ const Store = (() => {
   function deleteComment(commentId) {
     const comment = comments.find(c => c.id === Number(commentId));
     if (!comment) return fail(404, { detail: 'Not found.' });
+    if (projectById(boardProject(itemById(comment.card).board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
     // Author-only, exactly like the real endpoint. A comment whose author was
     // deleted (author === null) can be removed by any member.
     if (comment.author !== null && me && comment.author !== me.id) {
@@ -932,6 +998,7 @@ const Store = (() => {
     getCsrf, login, logout, getMe,
     listProjects, getProject, createProject, deleteProject,
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
+    archiveProject, unarchiveProject,
     listMyInvitations, acceptInvitation, declineInvitation,
     listBoards, getBoard, createBoard, getBoardWorkItems,
     listStatuses, createStatus, updateStatus, deleteStatus,

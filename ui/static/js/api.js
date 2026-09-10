@@ -64,10 +64,12 @@ const Api = (() => {
     getMe:    ()                   => request('/api/auth/me/'),
 
     /* Projects ---------------------------------------------------------- */
-    listProjects:  ()          => request('/api/projects/'),
+    listProjects:  (includeArchived) => request(`/api/projects/${includeArchived ? '?include_archived=true' : ''}`),
     getProject:    (id)        => request(`/api/projects/${id}/`),
     createProject: (fields)    => request('/api/projects/', { method: 'POST', body: fields }),
     deleteProject: (id)        => request(`/api/projects/${id}/`, { method: 'DELETE' }),
+    archiveProject:   (id) => request(`/api/projects/${id}/archive/`,   { method: 'POST' }),
+    unarchiveProject: (id) => request(`/api/projects/${id}/unarchive/`, { method: 'POST' }),
 
     /* Membership. "Leave" is not an endpoint of its own — it is removing
        your own membership, and the server applies the same owner rule. */

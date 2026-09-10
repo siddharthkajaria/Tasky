@@ -40,6 +40,11 @@ const Logic = (() => {
     return LABEL_PALETTE[hash % LABEL_PALETTE.length];
   }
 
+  /* ---- Project archive (sub-project 9) ------------------------------------
+     Archiving is Owner-only — one tier stricter than the Owner/Admin split
+     every other per-project manage-tier predicate in this file uses. */
+  const canManageProjectArchive = (role) => role === 'owner';
+
   /* ---- Project roles --------------------------------------------------- */
 
   /* The permission matrix from the Projects & Membership spec. It is
@@ -228,6 +233,7 @@ const Logic = (() => {
     ROLE_LABEL,
     CATEGORIES, CATEGORY_LABELS, canManageStatuses,
     LABEL_PALETTE, colorForLabelName,
+    canManageProjectArchive,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
