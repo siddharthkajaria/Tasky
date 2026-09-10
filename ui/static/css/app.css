@@ -1156,3 +1156,37 @@ button, input, textarea, select { font: inherit; color: inherit; }
   transition: border-color .12s ease, background .12s ease;
 }
 .assign-select:hover { border-color: var(--ink-3); background: var(--sunk); }
+
+/* Custom fields on a work item -------------------------------------------- */
+
+.cf-block { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 14px; }
+.cf-block h2 {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 400;
+  margin: 0 0 10px;
+}
+
+.cf-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.cf-grid .cf-wide { grid-column: 1 / -1; }
+.cf-field { margin-bottom: 0; }
+
+.req {
+  font-family: var(--mono);
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: .07em;
+  color: var(--accent);
+  margin-left: 4px;
+}
+
+.field-error[hidden] { display: none; }
+.field-error { display: block; color: var(--danger); font-size: 11.5px; margin-top: 4px; }
+.cf-field.has-error input,
+.cf-field.has-error textarea,
+.cf-field.has-error select { border-color: var(--danger); }
+
+.orphan-note { color: var(--ink-3); font-size: 11.5px; margin-bottom: 8px; }

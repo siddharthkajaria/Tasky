@@ -1308,6 +1308,12 @@ const Store = (() => {
     return wait(Object.assign({}, current));
   }
 
+  async function getScreenForItemType(projectId, itemType) {
+    const assignments = await listScreenAssignments(projectId);
+    const screenId = assignments[itemType];
+    return screenId ? screenOut(screenById(screenId)) : null;
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1388,7 +1394,7 @@ const Store = (() => {
     addFieldOption, renameFieldOption, moveFieldOption, deleteFieldOption,
     listScreens, createScreen, getScreen, renameScreen, deleteScreen,
     addScreenField, setScreenFieldRequired, moveScreenField, removeScreenField,
-    listScreenAssignments, setScreenAssignments,
+    listScreenAssignments, setScreenAssignments, getScreenForItemType,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
   };

@@ -1272,6 +1272,139 @@ function assignmentRow(itemType, screenId, allScreens, project, canEdit, main) {
   return li;
 }
 
+/* Custom field controls on a work item form ------------------------------
+   One renderer, used by both the inline "add work item" form and the
+   detail modal, so a field looks and behaves the same wherever it is
+   filled in. */
+
+const CF_WIDE_TYPES = ['text_long', 'multiselect'];
+
+function customFieldControl(row, value, members) {
+  const field = row.field_detail;
+  const name = `cf-${field.id}`;
+  const req = row.required ? '<em class="req">required</em>' : '';
+  const wide = CF_WIDE_TYPES.includes(field.field_type);
+  let control;
+  let tag = 'label';
+
+  switch (field.field_type) {
+    case 'text_long':
+      control = `<textarea name="${name}" data-cf="${field.id}" rows="3">${esc(value || '')}</textarea>`;
+      break;
+    case 'number':
+      control = `<input type="number" step="any" name="${name}" data-cf="${field.id}" value="${esc(value == null ? '' : value)}">`;
+      break;
+    case 'date':
+      control = `<input type="date" name="${name}" data-cf="${field.id}" value="${esc(value || '')}">`;
+      break;
+    case 'select':
+      control =
+        `<select name="${name}" data-cf="${field.id}"><option value="">—</option>` +
+        field.options.map(o => `<option value="${o.id}" ${String(value) === String(o.id) ? 'selected' : ''}>${esc(o.label)}</option>`).join('') +
+        `</select>`;
+      break;
+    case 'multiselect': {
+      tag = 'div';
+      const chosen = (value || []).map(String);
+      control =
+        `<div class="chip-check-list" data-cf="${field.id}">` +
+        (field.options.length
+          ? field.options.map(o => {
+              const on = chosen.includes(String(o.id));
+              return `<label class="chip-check ${on ? 'is-checked' : ''}"><input type="checkbox" value="${o.id}" ${on ? 'checked' : ''}>${esc(o.label)}</label>`;
+            }).join('')
+          : `<p class="empty-inline">No options defined yet — add some under Fields.</p>`) +
+        `</div>`;
+      break;
+    }
+    case 'checkbox': {
+      tag = 'div';
+      const on = value === true;
+      control = `<div class="chip-check-list" data-cf="${field.id}"><label class="chip-check ${on ? 'is-checked' : ''}"><input type="checkbox" ${on ? 'checked' : ''}>Yes</label></div>`;
+      break;
+    }
+    case 'user_picker':
+      control =
+        `<select name="${name}" data-cf="${field.id}"><option value="">—</option>` +
+        members.map(m => `<option value="${m.user_detail.id}" ${String(value) === String(m.user_detail.id) ? 'selected' : ''}>${esc(m.user_detail.display_name || m.user_detail.username)}</option>`).join('') +
+        `</select>`;
+      break;
+    default:
+      control = `<input type="text" name="${name}" data-cf="${field.id}" value="${esc(value == null ? '' : value)}">`;
+  }
+
+  return `<${tag} class="field cf-field${wide ? ' cf-wide' : ''}" data-cf-wrap="${field.id}">` +
+    `<span>${esc(field.name)}${req}</span>${control}` +
+    `<span class="field-error" data-cf-error="${field.id}" hidden></span>` +
+    `</${tag}>`;
+}
+
+function customFieldControls(rows, values, members) {
+  return rows.map(row => customFieldControl(row, values ? values[row.field_detail.id] : undefined, members)).join('');
+}
+
+function readCustomFieldInputs(scope, rows) {
+  const out = {};
+  rows.forEach(row => {
+    const field = row.field_detail;
+    const el = scope.querySelector(`[data-cf="${field.id}"]`);
+    if (!el) return;
+    if (field.field_type === 'multiselect') {
+      out[field.id] = Array.from(el.querySelectorAll('input:checked')).map(i => Number(i.value));
+    } else if (field.field_type === 'checkbox') {
+      const box = el.querySelector('input');
+      out[field.id] = !!(box && box.checked);
+    } else if (field.field_type === 'select' || field.field_type === 'user_picker') {
+      out[field.id] = el.value ? Number(el.value) : null;
+    } else {
+      out[field.id] = el.value;
+    }
+  });
+  return out;
+}
+
+function bindChipChecks(scope) {
+  scope.querySelectorAll('.chip-check').forEach(chip => {
+    const input = chip.querySelector('input');
+    if (!input || chip.dataset.bound) return;
+    chip.dataset.bound = '1';
+    input.addEventListener('change', () => chip.classList.toggle('is-checked', input.checked));
+  });
+}
+
+function clearCustomFieldErrors(scope) {
+  scope.querySelectorAll('[data-cf-error]').forEach(el => { el.hidden = true; el.textContent = ''; });
+  scope.querySelectorAll('.cf-field.has-error').forEach(el => el.classList.remove('has-error'));
+}
+
+function applyCustomFieldErrors(scope, errors) {
+  clearCustomFieldErrors(scope);
+  // `err.data.custom_fields` is EITHER a bare string (only the
+  // "no screen assigned" case) OR a `{fieldId: message}` dict for every
+  // other failure (not-on-screen, required, type error) — see
+  // docs/api.md's "Work Items — custom_fields" section and
+  // boards/services.py's custom_fields_write_error, which the mock in
+  // Task 5.2 mirrors exactly. A string is a form-level error (no single
+  // field to pin it to); a dict is pinned per field, under the
+  // `[data-cf-error="<fieldId>"]` span customFieldControl already
+  // renders for each control.
+  if (typeof errors === 'string') {
+    const errorEl = scope.querySelector('[data-error]') || scope.querySelector('.form-error');
+    if (errorEl) { errorEl.textContent = errors; errorEl.hidden = false; }
+    return;
+  }
+  Object.keys(errors || {}).forEach(fieldId => {
+    const el = scope.querySelector(`[data-cf-error="${fieldId}"]`);
+    if (!el) return;
+    el.textContent = errors[fieldId];
+    el.hidden = false;
+    const wrap = scope.querySelector(`[data-cf-wrap="${fieldId}"]`);
+    if (wrap) wrap.classList.add('has-error');
+  });
+  const first = scope.querySelector('.cf-field.has-error');
+  if (first) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 /* Members -------------------------------------------------------------- */
 
 async function renderMembers(main, project) {
@@ -1667,7 +1800,10 @@ function addWorkItemControl(status) {
   btn.textContent = '+ Add work item';
   wrap.appendChild(btn);
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    let members = [];
+    try { members = await data.listMembers(boardState.projectId); } catch { /* proceed without user_picker options */ }
+
     const form = document.createElement('form');
     form.className = 'add-wi-form';
     form.innerHTML =
@@ -1677,6 +1813,7 @@ function addWorkItemControl(status) {
       `<input name="title" placeholder="What needs doing?" aria-label="Title">` +
       `<label class="add-wi-parent" data-parent-wrap><span class="add-wi-label" data-parent-label>Parent</span>` +
       `<select name="parent" aria-label="Parent"><option value="">No parent</option></select></label>` +
+      `<div class="cf-grid" data-cf-container></div>` +
       `<p class="form-error" data-error hidden></p>` +
       `<div class="add-wi-actions"><button class="btn btn-primary" type="submit">Add</button>` +
       `<button class="btn btn-quiet" type="button" data-cancel>Cancel</button></div>`;
@@ -1720,6 +1857,18 @@ function addWorkItemControl(status) {
     typeSelect.addEventListener('change', refreshParent);
     refreshParent();
 
+    const cfContainer = form.querySelector('[data-cf-container]');
+    let currentScreen = null;
+    async function refreshCustomFields() {
+      try { currentScreen = await data.getScreenForItemType(boardState.projectId, typeSelect.value); }
+      catch { currentScreen = null; }
+      const rows = currentScreen ? currentScreen.fields : [];
+      cfContainer.innerHTML = rows.length ? customFieldControls(rows, null, members) : '';
+      bindChipChecks(cfContainer);
+    }
+    typeSelect.addEventListener('change', refreshCustomFields);
+    await refreshCustomFields();
+
     const cancel = () => wrap.replaceChildren(btn);
     form.querySelector('[data-cancel]').addEventListener('click', cancel);
     form.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancel(); });
@@ -1729,20 +1878,27 @@ function addWorkItemControl(status) {
       if (!titleInput.value.trim()) { titleInput.focus(); return; }
       errorEl.hidden = true;
       submitBtn.disabled = true;
+      clearCustomFieldErrors(form);
+      const payload = {
+        board: boardState.boardId,
+        item_type: typeSelect.value,
+        title: titleInput.value,
+        parent: (Logic.canHaveParent(typeSelect.value) && parentSelect.value) ? Number(parentSelect.value) : null,
+        status,
+      };
+      if (currentScreen && currentScreen.fields.length) payload.custom_fields = readCustomFieldInputs(form, currentScreen.fields);
       try {
-        await data.createWorkItem({
-          board: boardState.boardId,
-          item_type: typeSelect.value,
-          title: titleInput.value,
-          parent: (Logic.canHaveParent(typeSelect.value) && parentSelect.value) ? Number(parentSelect.value) : null,
-          status,
-        });
+        await data.createWorkItem(payload);
         await reloadBoard();
         toast('Work item created');
       } catch (err) {
         if (err && err.sessionExpired) return handle(err);
-        errorEl.textContent = errorText(err);
-        errorEl.hidden = false;
+        if (err && err.data && err.data.custom_fields) {
+          applyCustomFieldErrors(form, err.data.custom_fields);
+        } else {
+          errorEl.textContent = errorText(err);
+          errorEl.hidden = false;
+        }
         submitBtn.disabled = false;
       }
     });
@@ -1806,6 +1962,10 @@ async function openWorkItemModal(itemId) {
   } catch (err) { return handle(err); }
 
   try { allLabels = await data.listLabels(); } catch { allLabels = []; }
+  let members = [], screen = null;
+  try { members = await data.listMembers(boardState.projectId); } catch { /* proceed without user_picker options */ }
+  try { screen = await data.getScreenForItemType(boardState.projectId, item.item_type); } catch { screen = null; }
+  const screenRows = screen ? screen.fields : [];
   const users = await cachedUsers();
   const projectComponents = boardState.components || [];
   const onBoard = boardItems();
@@ -1861,6 +2021,15 @@ async function openWorkItemModal(itemId) {
           }</select></label>`
         : `<div class="field field-note"><span>Parent</span><p class="empty-inline">An Epic sits at the top — it never has one.</p></div>`) +
     `</div>` +
+    (screenRows.length ? `<div class="cf-block"><h2>Custom fields</h2><div class="cf-grid">${customFieldControls(screenRows, item.custom_fields, members)}</div></div>` : '') +
+    (() => {
+      const onScreenIds = new Set(screenRows.map(r => r.field_detail.id));
+      const orphaned = Object.keys(item.custom_fields || {}).filter(fid => !onScreenIds.has(Number(fid)));
+      if (!orphaned.length) return '';
+      return `<div class="cf-block"><h2>Other saved values</h2>` +
+        orphaned.map(fid => `<p class="orphan-note">Field ${esc(fid)}: ${esc(JSON.stringify(item.custom_fields[fid]))} (no longer on this item's screen)</p>`).join('') +
+        `</div>`;
+    })() +
     `<p class="form-error" data-error hidden></p>` +
     `<div class="modal-actions">` +
       `<button class="btn btn-primary" type="button" data-save>Save changes</button>` +
@@ -1914,6 +2083,8 @@ async function openWorkItemModal(itemId) {
     input.addEventListener('change', () => chip.classList.toggle('is-checked', input.checked));
   });
 
+  bindChipChecks(modal);
+
   modal.querySelector('[data-save]').addEventListener('click', async () => {
     errorEl.hidden = true;
     const saveBtn = modal.querySelector('[data-save]');
@@ -1930,6 +2101,7 @@ async function openWorkItemModal(itemId) {
       components: Array.from(modal.querySelectorAll('.chip-check input:checked')).map(i => i.value),
     }, item.item_type);
     fields.labels = labelInput.getNames();
+    if (screenRows.length) fields.custom_fields = readCustomFieldInputs(modal, screenRows);
 
     const newStatus = Number(modal.querySelector('[name=status]').value);
 
@@ -1948,8 +2120,12 @@ async function openWorkItemModal(itemId) {
       toast('Saved');
     } catch (err) {
       if (err && err.sessionExpired) { close(); return handle(err); }
-      errorEl.textContent = errorText(err);
-      errorEl.hidden = false;
+      if (err && err.data && err.data.custom_fields) {
+        applyCustomFieldErrors(modal, err.data.custom_fields);
+      } else {
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+      }
       saveBtn.disabled = false;
       /* The move may have landed before the PATCH failed, so the board on
          screen would otherwise be stale. */

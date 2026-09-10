@@ -164,5 +164,10 @@ const Api = (() => {
     /* Per-project screen assignments ------------------------------------ */
     listScreenAssignments: (projectId)              => request(`/api/projects/${projectId}/screen-assignments/`),
     setScreenAssignments:  (projectId, assignments) => request(`/api/projects/${projectId}/screen-assignments/`, { method: 'PUT', body: assignments }),
+    getScreenForItemType: async (projectId, itemType) => {
+      const [assignments, screens] = await Promise.all([request(`/api/projects/${projectId}/screen-assignments/`), request('/api/screens/')]);
+      const screenId = assignments[itemType];
+      return screenId ? screens.find(s => s.id === screenId) || null : null;
+    },
   };
 })();
