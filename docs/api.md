@@ -99,10 +99,19 @@ existing Admin first (there is no "leave" endpoint of its own — the client mod
 "leave" as removing your own membership, subject to the same owner restriction as any
 other removal).
 
-**Archiving is visibility-only.** An archived project drops out of the default `GET
-/api/projects/` list but stays exactly as writable as before for its existing members — no
-other endpoint treats an archived project's boards, work items, or anything else as read-only.
-`Project.delete()` (hard delete, cascading, irreversible) is unrelated and untouched.
+Every project response also carries `is_archived` (bool), `archived_at` (ISO datetime or
+`null`), and `archived_by_detail` (a nested user object, or `null`) — all three are
+read-only; only `POST .../archive/` and `POST .../unarchive/` change them.
+
+**Archiving makes a project's boards, work items and everything else that hangs off it
+read-only.** A `GET` still works on any of it; any unsafe method (`POST`/`PATCH`/`PUT`/
+`DELETE`) against a board, work item, component, release, status, automation rule, sprint,
+comment, attachment, work-item link, or screen assignment belonging to an archived project
+is rejected with `403: {"detail": "This project is archived and read-only. Unarchive it
+first."}`. The project's own management endpoints — `archive`/`unarchive`/`invite`/
+`transfer-ownership`/`members`/`{id}` (`DELETE`) — are exempt, so an archived project can
+always be unarchived or have its membership cleaned up. `Project.delete()` (hard delete,
+cascading, irreversible) is unrelated and untouched.
 
 ## Project Templates
 | Method | Path | Notes |
