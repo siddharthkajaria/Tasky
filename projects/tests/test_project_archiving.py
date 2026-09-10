@@ -77,17 +77,81 @@ def test_include_archived_query_param_includes_them(auth_client, project):
 
 
 @pytest.mark.django_db
-def test_archived_projects_boards_and_work_items_remain_fully_writable(auth_client, project, user):
+def test_archived_project_blocks_work_item_edits(auth_client, project, user):
+    """Was 'remain_fully_writable' — inverted per roadmap defect X2: an
+    archived project is now genuinely read-only, not just hidden from the
+    default list."""
     board = Board.objects.create(name="Board", created_by=user, project=project)
     seed_default_statuses(project)
     status = WorkItemStatus.objects.filter(project=project, category="todo").first()
-    item = WorkItem.objects.create(board=board, title="Still editable", status=status)
+    item = WorkItem.objects.create(board=board, title="Not editable once archived", status=status)
 
     auth_client.post(f"/api/projects/{project.id}/archive/")
 
     response = auth_client.patch(
         f"/api/work-items/{item.id}/", {"title": "Edited after archive"}, content_type="application/json"
     )
-    assert response.status_code == 200
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This project is archived and read-only. Unarchive it first."
     item.refresh_from_db()
-    assert item.title == "Edited after archive"
+    assert item.title == "Not editable once archived"
+
+
+@pytest.mark.django_db
+def test_archived_project_still_allows_reads(auth_client, project, user):
+    board = Board.objects.create(name="Board", created_by=user, project=project)
+    seed_default_statuses(project)
+    status = WorkItemStatus.objects.filter(project=project, category="todo").first()
+    item = WorkItem.objects.create(board=board, title="Readable", status=status)
+
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+
+    response = auth_client.get(f"/api/work-items/{item.id}/")
+    assert response.status_code == 200
+    assert response.json()["title"] == "Readable"
+
+
+@pytest.mark.django_db
+def test_archived_project_blocks_new_boards(auth_client, project):
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+    response = auth_client.post("/api/boards/", {"project": project.id, "name": "New board"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This project is archived and read-only. Unarchive it first."
+
+
+@pytest.mark.django_db
+def test_archived_project_blocks_new_work_items(auth_client, project, user):
+    board = Board.objects.create(name="Board", created_by=user, project=project)
+    seed_default_statuses(project)
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+    response = auth_client.post("/api/work-items/", {"board": board.id, "item_type": "task", "title": "x"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This project is archived and read-only. Unarchive it first."
+
+
+@pytest.mark.django_db
+def test_archived_project_blocks_new_components(auth_client, project):
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+    response = auth_client.post(f"/api/projects/{project.id}/components/", {"name": "Backend"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This project is archived and read-only. Unarchive it first."
+
+
+@pytest.mark.django_db
+def test_unarchiving_still_works_once_a_project_is_archived(auth_client, project):
+    """The write-block must not lock the owner out of reversing it."""
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+    response = auth_client.post(f"/api/projects/{project.id}/unarchive/")
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is False
+
+
+@pytest.mark.django_db
+def test_removing_a_member_still_works_once_a_project_is_archived(auth_client, project, other_user):
+    """Project-level membership management (an owner cleaning up before
+    archiving finishes, or reorganizing an archived project) must not be
+    blocked by the same write-lock that protects its boards/work items."""
+    ProjectMembership.objects.create(project=project, user=other_user, role="member")
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+    response = auth_client.delete(f"/api/projects/{project.id}/members/{other_user.id}/")
+    assert response.status_code == 204

@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from projects.models import ProjectMembership
-from projects.permissions import IsProjectMember
+from projects.permissions import IsProjectMember, ProjectNotArchived
 
 from .automation import action_config_error, trigger_filter_error
 from .models import (
@@ -75,7 +75,7 @@ class BoardViewSet(viewsets.ModelViewSet):
 
     serializer_class = BoardSerializer
     pagination_class = None
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
 
     def get_queryset(self):
         qs = Board.objects.select_related("project", "created_by")
@@ -88,6 +88,9 @@ class BoardViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        project = serializer.validated_data["project"]
+        if project.is_archived:
+            raise PermissionDenied("This project is archived and read-only. Unarchive it first.")
         serializer.save(created_by=self.request.user)
 
     def update(self, request, *args, **kwargs):
@@ -132,7 +135,7 @@ MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024  # 25 MB
 class WorkItemViewSet(viewsets.ModelViewSet):
     serializer_class = WorkItemSerializer
     pagination_class = None
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
 
     def get_queryset(self):
         qs = WorkItem.objects.select_related(
@@ -156,6 +159,8 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         # apart, and keeps the lock + increment + INSERT in one atomic block
         # instead of splitting them across two.
         board = serializer.validated_data["board"]
+        if board.project.is_archived:
+            raise PermissionDenied("This project is archived and read-only. Unarchive it first.")
         status = serializer.validated_data["status"]
         sprint = serializer.validated_data.get("sprint")
         serializer.save(
@@ -527,7 +532,7 @@ class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
     """Deletion only — comments are created through the work item's own endpoint."""
 
     serializer_class = CommentSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
 
     def get_queryset(self):
         return Comment.objects.select_related("author", "card__board__project")
@@ -548,7 +553,7 @@ class AttachmentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
     work item's own /attachments/ endpoint (see WorkItemViewSet)."""
 
     serializer_class = AttachmentSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
 
     def get_queryset(self):
         return Attachment.objects.select_related("uploaded_by", "work_item__board__project")
@@ -590,12 +595,17 @@ class WorkItemLinkViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
         is_member = IsProjectMember().has_object_permission
         if not (is_member(request, self, obj.item_a) and is_member(request, self, obj.item_b)):
             self.permission_denied(request, message="You don't have access to this project.")
+        not_archived = ProjectNotArchived().has_object_permission
+        if not (not_archived(request, self, obj.item_a) and not_archived(request, self, obj.item_b)):
+            self.permission_denied(
+                request, message="This project is archived and read-only. Unarchive it first."
+            )
 
 
 class ComponentViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     serializer_class = ComponentSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
     pagination_class = None
 
     def get_project(self):
@@ -657,7 +667,7 @@ class ComponentViewSet(viewsets.ModelViewSet):
 class ReleaseViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     serializer_class = ReleaseSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
     pagination_class = None
 
     def get_project(self):
@@ -735,7 +745,7 @@ class LabelViewSet(viewsets.ModelViewSet):
 class WorkItemStatusViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     serializer_class = WorkItemStatusSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
     pagination_class = None
 
     def get_project(self):
@@ -852,7 +862,7 @@ class WorkItemStatusViewSet(viewsets.ModelViewSet):
 class AutomationRuleViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     serializer_class = AutomationRuleSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
     pagination_class = None
 
     def get_project(self):
@@ -946,7 +956,7 @@ class AutomationRuleViewSet(viewsets.ModelViewSet):
 class SprintViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
     serializer_class = SprintSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
     pagination_class = None
 
     def get_board(self):
@@ -1058,7 +1068,7 @@ class SprintViewSet(viewsets.ModelViewSet):
 
 
 class ProjectScreenAssignmentsView(APIView):
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
 
     def get_project(self):
         from projects.models import Project
