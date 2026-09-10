@@ -363,6 +363,7 @@ async function viewProject(projectId) {
   renderProjectActions(main, project);
   renderBoards(main, project);
   renderComponents(main, project);
+  renderStatuses(main, project);
   renderMembers(main, project);
 }
 
@@ -546,6 +547,138 @@ function componentRow(component, main, project) {
         toast('Component deleted');
         await renderComponents(main, project);
       } catch (err) { handle(err); }
+    });
+  }
+  return li;
+}
+
+/* Statuses (sub-project 3) ---------------------------------------------- */
+
+async function renderStatuses(main, project) {
+  const list = main.querySelector('[data-statuses]');
+  const form = main.querySelector('[data-create-status]');
+  const canManage = Logic.canManageStatuses(project.my_role);
+  form.hidden = !canManage;
+  list.innerHTML = skeletonList(3);
+
+  const categorySelect = form.querySelector('[data-category-select]');
+  categorySelect.replaceChildren(...Logic.CATEGORIES.map(c => new Option(Logic.CATEGORY_LABELS[c], c)));
+
+  if (!form.dataset.wired) {
+    form.dataset.wired = '1';
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nameInput = form.querySelector('[name=name]');
+      const btn = form.querySelector('button');
+      if (!nameInput.value.trim()) return;
+      btn.disabled = true;
+      try {
+        await data.createStatus(project.id, { name: nameInput.value, category: categorySelect.value });
+        nameInput.value = '';
+        toast('Status added');
+        await renderStatuses(main, project);
+      } catch (err) {
+        handle(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  try {
+    const statuses = await data.listStatuses(project.id);
+    const rows = statuses.map((s, i) => statusRow(s, i, statuses, main, project));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => renderStatuses(main, project));
+  }
+}
+
+function statusRow(status, i, all, main, project) {
+  const canManage = Logic.canManageStatuses(project.my_role);
+  const last = i === all.length - 1;
+  const li = document.createElement('li');
+  li.className = 'order-row';
+  li.innerHTML =
+    (canManage
+      ? `<span class="order-handle">` +
+          `<button class="icon-btn" data-up ${i === 0 ? 'disabled' : ''} aria-label="Move up" type="button">▲</button>` +
+          `<button class="icon-btn" data-down ${last ? 'disabled' : ''} aria-label="Move down" type="button">▼</button>` +
+        `</span>`
+      : '') +
+    `<span class="cat-dot cat-${esc(status.category)}"></span>` +
+    `<span class="label" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(status.name)}</span>` +
+    (canManage
+      ? `<select data-category aria-label="Category for ${esc(status.name)}">${Logic.CATEGORIES.map(c =>
+          `<option value="${c}" ${c === status.category ? 'selected' : ''}>${Logic.CATEGORY_LABELS[c]}</option>`
+        ).join('')}</select>`
+      : `<span class="hint">${Logic.CATEGORY_LABELS[status.category]}</span>`) +
+    (canManage ? `<button class="btn btn-danger" data-remove type="button">Delete</button>` : '');
+
+  const refresh = () => renderStatuses(main, project);
+
+  const up = li.querySelector('[data-up]');
+  if (up) up.addEventListener('click', async () => {
+    const other = all[i - 1];
+    try {
+      await data.updateStatus(project.id, status.id, { position: other.position });
+      await data.updateStatus(project.id, other.id, { position: status.position });
+      await refresh();
+    } catch (err) { handle(err); }
+  });
+  const down = li.querySelector('[data-down]');
+  if (down) down.addEventListener('click', async () => {
+    const other = all[i + 1];
+    try {
+      await data.updateStatus(project.id, status.id, { position: other.position });
+      await data.updateStatus(project.id, other.id, { position: status.position });
+      await refresh();
+    } catch (err) { handle(err); }
+  });
+  const remove = li.querySelector('[data-remove]');
+  if (remove) remove.addEventListener('click', async () => {
+    if (!confirm(`Delete "${status.name}"?`)) return;
+    try {
+      await data.deleteStatus(project.id, status.id);
+      toast('Status deleted');
+      await refresh();
+    } catch (err) { handle(err); }
+  });
+
+  const categoryEl = li.querySelector('[data-category]');
+  if (categoryEl) {
+    const previous = status.category;
+    categoryEl.addEventListener('change', async () => {
+      try {
+        await data.updateStatus(project.id, status.id, { category: categoryEl.value });
+        toast('Status recategorized');
+        await refresh();
+      } catch (err) {
+        categoryEl.value = previous;
+        handle(err);
+      }
+    });
+  }
+
+  const labelEl = li.querySelector('[data-rename]');
+  if (labelEl) {
+    labelEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); }
+      if (e.key === 'Escape') { labelEl.textContent = status.name; labelEl.blur(); }
+    });
+    labelEl.addEventListener('blur', async () => {
+      const value = labelEl.textContent.trim();
+      if (!value || value === status.name) { labelEl.textContent = status.name; return; }
+      try {
+        await data.updateStatus(project.id, status.id, { name: value });
+        status.name = value;
+        toast('Status renamed');
+      } catch (err) {
+        labelEl.textContent = status.name;
+        handle(err);
+      }
     });
   }
   return li;
