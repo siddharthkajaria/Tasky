@@ -72,6 +72,40 @@ const Store = (() => {
     { id: 22, project: 1, name: 'Frontend' },
   ];
 
+  let labels = [
+    { id: id(), name: 'urgent', color: Logic.colorForLabelName('urgent') },
+    { id: id(), name: 'needs-design', color: Logic.colorForLabelName('needs-design') },
+  ];
+  const labelById = (lid) => labels.find(l => l.id === Number(lid)) || null;
+  /* Case-insensitive, matching the real API's resolve-or-create rule for
+     the `labels` field on a work item write. */
+  const labelByName = (name) => labels.find(l => l.name.toLowerCase() === String(name).trim().toLowerCase()) || null;
+
+  /* Resolves a list of label NAMES (as the `labels` work-item field takes)
+     into Label rows, creating any that don't exist yet — same behavior
+     `docs/api.md` documents for the real endpoint, including the "two
+     names differing only by case collapse to one" and "blank name fails
+     the whole write" rules. Returns `{ ids, error }`; `error` is set (and
+     `ids` is empty) on the first blank name found. */
+  function resolveLabelNames(names) {
+    const seen = new Set();
+    const ids = [];
+    for (const raw of names || []) {
+      const trimmed = String(raw).trim();
+      if (!trimmed) return { ids: [], error: { labels: "A label name can't be blank." } };
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      let label = labelByName(trimmed);
+      if (!label) {
+        label = { id: id(), name: trimmed, color: Logic.colorForLabelName(trimmed) };
+        labels.push(label);
+      }
+      ids.push(label.id);
+    }
+    return { ids, error: null };
+  }
+
   /* Work item statuses (sub-project 3, Workflows). Per-project and
      configurable on the real backend; the mock only needs the fixed
      "simple" 3-status preset every project starts with, since nothing here
@@ -104,7 +138,7 @@ const Store = (() => {
   function seed(o) {
     const item = Object.assign({
       description: '', status: P1_TODO, priority: 2, due_date: null, assignee: null,
-      parent: null, position: 0, components: [], created_by: 1,
+      parent: null, position: 0, components: [], labels: [], created_by: 1,
       created_at: now(), updated_at: now(),
     }, o);
     workItems.push(item);
@@ -224,6 +258,7 @@ const Store = (() => {
       priority_label: Logic.PRIORITY_LABELS[w.priority],
       parent_detail: w.parent ? summaryOut(itemById(w.parent)) : null,
       components_detail: components.filter(c => w.components.includes(c.id)),
+      labels_detail: labels.filter(l => (w.labels || []).includes(l.id)),
       status_detail: statusById(w.status),
     });
   }
@@ -569,6 +604,12 @@ const Store = (() => {
     if (!statusById(status) || statusById(status).project !== board.project) {
       return fail(400, { status: 'Status must belong to this item\'s project.' });
     }
+    let labelIds = [];
+    if (fields.labels && fields.labels.length) {
+      const resolved = resolveLabelNames(fields.labels);
+      if (resolved.error) return fail(400, resolved.error);
+      labelIds = resolved.ids;
+    }
     const siblings = workItems.filter(w => w.board === board.id && w.status === status);
     const item = seed({
       id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
@@ -576,7 +617,7 @@ const Store = (() => {
       description: fields.description || '', status, position: siblings.length,
       priority: fields.priority || 2, due_date: fields.due_date || null,
       assignee: fields.assignee || null, parent: parent ? parent.id : null,
-      components: fields.components || [], created_by: me.id,
+      components: fields.components || [], labels: labelIds, created_by: me.id,
     });
     return wait(itemOut(item));
   }
@@ -630,6 +671,13 @@ const Store = (() => {
     if ('assignee' in fields) item.assignee = fields.assignee ? Number(fields.assignee) : null;
     if ('priority' in fields) item.priority = Number(fields.priority);
     if (newParent !== undefined) item.parent = newParent ? newParent.id : null;
+    if ('labels' in fields) {
+      // PATCH replaces the full label set — matching docs/api.md exactly,
+      // unlike `components` which the UI always sends in full anyway.
+      const resolved = resolveLabelNames(fields.labels);
+      if (resolved.error) return fail(400, resolved.error);
+      item.labels = resolved.ids;
+    }
     item.updated_at = now();
 
     return wait(itemOut(item));
@@ -812,6 +860,51 @@ const Store = (() => {
 
   const listUsers = () => wait(users);
 
+  /* ---- labels ------------------------------------------------------------ */
+
+  const listLabels = () => wait(labels.slice().sort((a, b) => a.name.localeCompare(b.name)));
+
+  /* Governance is deliberately NOT project-scoped — the caller only needs to
+     be an Owner of *some* project, matching docs/api.md exactly (labels are
+     global, and renaming/recoloring/deleting is a wider-blast-radius action
+     gated separately from ordinary label use). */
+  function isOwnerOfAnyProject() {
+    return memberships.some(m => m.user === me.id && m.role === 'owner');
+  }
+
+  function renameLabel(labelId, name) {
+    const label = labelById(labelId);
+    if (!label) return fail(404, { detail: 'Not found.' });
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have access to this project." });
+    if (!name || !name.trim()) return fail(400, { name: 'This field may not be blank.' });
+    const trimmed = name.trim();
+    if (labels.some(l => l.id !== label.id && l.name.toLowerCase() === trimmed.toLowerCase())) {
+      return fail(400, { name: `"${trimmed}" already exists.` });
+    }
+    label.name = trimmed;
+    return wait(label);
+  }
+
+  function recolorLabel(labelId, color) {
+    const label = labelById(labelId);
+    if (!label) return fail(404, { detail: 'Not found.' });
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have access to this project." });
+    if (!Logic.LABEL_PALETTE.includes(color)) {
+      return fail(400, { color: `"${color}" is not one of the available colors.` });
+    }
+    label.color = color;
+    return wait(label);
+  }
+
+  function deleteLabel(labelId) {
+    const label = labelById(labelId);
+    if (!label) return fail(404, { detail: 'Not found.' });
+    if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have access to this project." });
+    labels = labels.filter(l => l.id !== label.id);
+    workItems.forEach(w => { w.labels = (w.labels || []).filter(lid => lid !== label.id); });
+    return wait(null);
+  }
+
   const myTasks = () => wait(
     workItems
       .filter(w => me && w.assignee === me.id &&
@@ -837,6 +930,7 @@ const Store = (() => {
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
     listLinks, createLink, deleteLink,
+    listLabels, renameLabel, recolorLabel, deleteLabel,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
   };

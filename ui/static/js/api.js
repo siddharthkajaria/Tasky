@@ -125,6 +125,13 @@ const Api = (() => {
     deleteComment: (id)           => request(`/api/comments/${id}/`, { method: 'DELETE' }),
 
     listUsers: () => request('/api/users/'),
+
+    /* Labels ------------------------------------------------------------- */
+    listLabels:   ()             => request('/api/labels/'),
+    renameLabel:  (id, name)     => request(`/api/labels/${id}/`, { method: 'PATCH', body: { name } }),
+    recolorLabel: (id, color)    => request(`/api/labels/${id}/`, { method: 'PATCH', body: { color } }),
+    deleteLabel:  (id)           => request(`/api/labels/${id}/`, { method: 'DELETE' }),
+
     myTasks:   () => request('/api/me/tasks/'),
   };
 })();
