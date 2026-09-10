@@ -20,6 +20,26 @@ const Logic = (() => {
 
   const canManageStatuses = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Labels (sub-project 4) ----------------------------------------
+     The 8-color palette every Label's `color` must be one of, and a
+     deterministic name→color hash so a brand-new label (not yet round-
+     tripped through the server) still previews a plausible color in the
+     chip-input widget before save. The server picks the real color the
+     same deterministic way when a name is first invented on a work item
+     write — this only needs to be *a* valid palette color, not necessarily
+     the exact one the server will assign, since the chip re-reads the
+     server's `labels_detail` on the next load either way. */
+  const LABEL_PALETTE = [
+    '#E4362C', '#D97C1F', '#C9A227', '#4E9A51',
+    '#2E8B8B', '#3B6FB6', '#7C5CBF', '#B23D82',
+  ];
+  function colorForLabelName(name) {
+    let hash = 0;
+    const s = String(name || '');
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return LABEL_PALETTE[hash % LABEL_PALETTE.length];
+  }
+
   /* ---- Project roles --------------------------------------------------- */
 
   /* The permission matrix from the Projects & Membership spec. It is
@@ -207,6 +227,7 @@ const Logic = (() => {
     PRIORITY_LABELS,
     ROLE_LABEL,
     CATEGORIES, CATEGORY_LABELS, canManageStatuses,
+    LABEL_PALETTE, colorForLabelName,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
