@@ -1005,6 +1005,71 @@ button, input, textarea, select { font: inherit; color: inherit; }
   font-size: 12.5px;
 }
 
+/* Custom fields & screens (sub-project 2b) -------------------------------
+   Deliberately built from pieces already here — the same row shell as
+   Components/Statuses, the same pill geometry as work item type badges. */
+
+.create-field[hidden] { display: none; }
+.create-field { display: flex; gap: 8px; margin: 0 0 8px; }
+.create-field input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 10px;
+}
+.create-field select {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.hint { color: var(--ink-3); font-size: 12px; margin-bottom: 10px; }
+
+/* A neutral sibling of .type-badge: same pill, no work-item colour, since
+   a field's type isn't part of the Epic/Story/Task colour language. */
+.type-badge.ft { color: var(--ink-3); }
+
+.admin-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 7px; }
+.admin-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  animation: row-in .22s var(--ease-out) both;
+  transition: border-color .12s ease;
+}
+.admin-row:hover { border-color: var(--rule-2); }
+.admin-row .name { font-weight: 500; }
+.admin-row .name[contenteditable] { border-radius: 2px; padding: 1px 4px; margin: -1px -4px; }
+.admin-row .name[contenteditable]:hover,
+.admin-row .name[contenteditable]:focus { background: var(--sunk); outline: none; }
+.admin-row .row-meta {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+.admin-row .actions { display: flex; align-items: center; gap: 6px; }
+.admin-row .btn { padding: 4px 9px; font-size: 12px; }
+
+.pos-index { font-family: var(--mono); font-size: 10px; color: var(--ink-3); width: 14px; text-align: right; }
+
+.add-row { display: flex; gap: 8px; margin-top: 10px; }
+.add-row input, .add-row select {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 6px 9px;
+}
+
 /* Responsive ---------------------------------------------------------- */
 
 @media (max-width: 880px) {

@@ -48,6 +48,7 @@
       <a href="#/projects" data-nav="projects">Projects</a>
       <a href="#/my-tasks" data-nav="my-tasks">My tasks</a>
       <a href="#/labels" data-nav="labels">Labels</a>
+      <a href="#/fields" data-nav="fields">Fields</a>
     </nav>
     <div class="topbar-end">
       <span class="who" data-who></span>
@@ -183,6 +184,26 @@
     <p class="locked-note" data-locked hidden></p>
 
     <ul class="label-admin-list" data-list></ul>
+  </div>
+</template>
+
+<template id="tpl-fields">
+  <div class="page page-narrow">
+    <div class="page-head">
+      <h1>Custom fields</h1>
+      <p class="page-sub">Global — one list, shared by every project. Put them on a Screen to make them appear on a work item.</p>
+    </div>
+
+    <form class="create-field" data-create-field novalidate hidden>
+      <input name="name" placeholder="Field name" aria-label="Field name" required>
+      <select name="field_type" aria-label="Field type" data-type-select></select>
+      <button class="btn btn-primary" type="submit">Add field</button>
+    </form>
+    <p class="hint" data-type-hint hidden></p>
+    <p class="form-error" data-create-error hidden></p>
+    <p class="locked-note" data-locked hidden></p>
+
+    <ul class="admin-list" data-list></ul>
   </div>
 </template>
 
