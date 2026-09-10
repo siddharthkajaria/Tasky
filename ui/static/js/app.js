@@ -1039,6 +1039,11 @@ function workItemCard(item) {
   const components = (item.components_detail || []).length
     ? `<span class="comp-chips">${item.components_detail.map(c => `<span class="comp-chip">${esc(c.name)}</span>`).join('')}</span>`
     : '';
+  const labelChips = (item.labels_detail || []).length
+    ? `<div class="card-labels">${item.labels_detail.map(l =>
+        `<span class="label-chip label-chip-sm" style="background:${esc(l.color)}">${esc(l.name)}</span>`
+      ).join('')}</div>`
+    : '';
 
   el.innerHTML =
     `<div class="wi-top">` +
@@ -1047,6 +1052,7 @@ function workItemCard(item) {
     `</div>` +
     `<p class="card-title">${esc(item.title)}</p>` +
     components +
+    labelChips +
     (parent || due || who ? `<div class="card-meta">${parent}${due}${who}</div>` : '');
 
   el.addEventListener('click', () => openWorkItemModal(item.id));
@@ -1208,11 +1214,12 @@ function wireDrop(col, stack, status) {
 /* Work item detail modal ------------------------------------------------ */
 
 async function openWorkItemModal(itemId) {
-  let item;
+  let item, allLabels;
   try {
     item = await data.getWorkItem(itemId);
   } catch (err) { return handle(err); }
 
+  try { allLabels = await data.listLabels(); } catch { allLabels = []; }
   const users = await cachedUsers();
   const projectComponents = boardState.components || [];
   const onBoard = boardItems();
@@ -1282,6 +1289,11 @@ async function openWorkItemModal(itemId) {
       }</div>` +
     `</div>` +
 
+    `<div class="block">` +
+      `<h2>Labels</h2>` +
+      `<div data-labels-container></div>` +
+    `</div>` +
+
     (canHaveChildren
       ? `<div class="block"><h2>Children</h2>` +
         `<ul class="children-list" data-children><li class="loading">Loading…</li></ul></div>`
@@ -1308,6 +1320,9 @@ async function openWorkItemModal(itemId) {
   const ctx = { modal, close, links: [] };
   const errorEl = modal.querySelector('[data-error]');
 
+  const labelInput = labelChipInput((item.labels_detail || []).map(l => l.name), allLabels);
+  modal.querySelector('[data-labels-container]').replaceChildren(labelInput.el);
+
   modal.querySelectorAll('.chip-check').forEach(chip => {
     const input = chip.querySelector('input');
     input.addEventListener('change', () => chip.classList.toggle('is-checked', input.checked));
@@ -1328,6 +1343,7 @@ async function openWorkItemModal(itemId) {
       parent: parentSelect ? parentSelect.value : '',
       components: Array.from(modal.querySelectorAll('.chip-check input:checked')).map(i => i.value),
     }, item.item_type);
+    fields.labels = labelInput.getNames();
 
     const newStatus = Number(modal.querySelector('[name=status]').value);
 
