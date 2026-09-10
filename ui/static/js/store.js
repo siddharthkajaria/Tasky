@@ -119,14 +119,41 @@ const Store = (() => {
      "simple" 3-status preset every project starts with, since nothing here
      exercises adding/renaming/reordering statuses. `status` on a work item
      is always one of these ids, never a string. */
+  const PROJECT_TEMPLATES = [
+    {
+      key: 'blank', name: 'Blank',
+      description: "Three statuses, no components — today's default. Good for anything that doesn't fit a more specific template.",
+      statuses: [{ name: 'To Do', category: 'todo' }, { name: 'In Progress', category: 'in_progress' }, { name: 'Done', category: 'done' }],
+      components: [],
+    },
+    {
+      key: 'software', name: 'Software Project',
+      description: 'An engineering-shaped workflow with room for review and blockers, plus a starter set of components to tag work by.',
+      statuses: [
+        { name: 'To Do', category: 'todo' }, { name: 'In Progress', category: 'in_progress' },
+        { name: 'In Review', category: 'in_progress' }, { name: 'Blocked', category: 'in_progress' },
+        { name: 'Done', category: 'done' },
+      ],
+      components: ['Frontend', 'Backend', 'Infrastructure'],
+    },
+    {
+      key: 'bugs', name: 'Bug Tracking',
+      description: 'For triaging and tracking defects through to verification.',
+      statuses: [
+        { name: 'To Do', category: 'todo' }, { name: 'In Progress', category: 'in_progress' },
+        { name: 'In Review', category: 'in_progress' }, { name: 'Blocked', category: 'in_progress' },
+        { name: 'Done', category: 'done' },
+      ],
+      components: [],
+    },
+  ];
+  const listProjectTemplates = () => wait(PROJECT_TEMPLATES);
+
   let statuses = [];
   let nextStatusId = 1000;
-  function seedDefaultStatuses(projectId) {
-    const made = [
-      { id: ++nextStatusId, project: projectId, name: 'To Do', category: 'todo', position: 0 },
-      { id: ++nextStatusId, project: projectId, name: 'In Progress', category: 'in_progress', position: 1 },
-      { id: ++nextStatusId, project: projectId, name: 'Done', category: 'done', position: 2 },
-    ];
+  function seedDefaultStatuses(projectId, statusPreset) {
+    const preset = statusPreset || PROJECT_TEMPLATES[0].statuses;   // 'blank''s 3-status preset
+    const made = preset.map((s, i) => ({ id: ++nextStatusId, project: projectId, name: s.name, category: s.category, position: i }));
     statuses.push(...made);
     return made;
   }
@@ -324,11 +351,19 @@ const Store = (() => {
     if (!/^[A-Z]{2,10}$/.test(key)) return fail(400, { key: 'Key must be 2–10 letters, e.g. TASKY.' });
     if (projects.some(p => p.key === key)) return fail(400, { key: `"${key}" is already taken.` });
 
-    const project = { id: id(), key, name: fields.name.trim(), description: fields.description || '', created_at: now() };
+    const templateKey = fields.template || 'blank';
+    const template = PROJECT_TEMPLATES.find(t => t.key === templateKey);
+    if (!template) return fail(400, { template: `"${templateKey}" is not a valid template.` });
+
+    const project = {
+      id: id(), key, name: fields.name.trim(), description: fields.description || '', created_at: now(),
+      is_archived: false, archived_at: null, archived_by: null,
+    };
     projects.push(project);
     memberships.push({ id: id(), project: project.id, user: me.id, role: 'owner', joined_at: now() });
     itemCounters[project.id] = 1;
-    seedDefaultStatuses(project.id);
+    seedDefaultStatuses(project.id, template.statuses);
+    template.components.forEach(name => { components.push({ id: id(), project: project.id, name }); });
     return wait(projectOut(project));
   }
 
@@ -999,7 +1034,7 @@ const Store = (() => {
 
   return {
     getCsrf, login, logout, getMe,
-    listProjects, getProject, createProject, deleteProject,
+    listProjects, getProject, createProject, deleteProject, listProjectTemplates,
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
     archiveProject, unarchiveProject,
     listMyInvitations, acceptInvitation, declineInvitation,

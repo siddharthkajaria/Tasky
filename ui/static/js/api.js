@@ -68,6 +68,7 @@ const Api = (() => {
     getProject:    (id)        => request(`/api/projects/${id}/`),
     createProject: (fields)    => request('/api/projects/', { method: 'POST', body: fields }),
     deleteProject: (id)        => request(`/api/projects/${id}/`, { method: 'DELETE' }),
+    listProjectTemplates: () => request('/api/project-templates/'),
     archiveProject:   (id) => request(`/api/projects/${id}/archive/`,   { method: 'POST' }),
     unarchiveProject: (id) => request(`/api/projects/${id}/unarchive/`, { method: 'POST' }),
 
