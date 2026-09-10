@@ -1026,6 +1026,16 @@ button, input, textarea, select { font: inherit; color: inherit; }
   cursor: pointer;
 }
 
+.create-screen[hidden] { display: none; }
+.create-screen { display: flex; gap: 8px; margin: 0 0 8px; }
+.create-screen input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 10px;
+}
+
 .hint { color: var(--ink-3); font-size: 12px; margin-bottom: 10px; }
 
 /* A neutral sibling of .type-badge: same pill, no work-item colour, since

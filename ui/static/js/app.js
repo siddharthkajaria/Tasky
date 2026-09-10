@@ -758,7 +758,7 @@ async function openScreenFieldsModal(screenId, canManage, onChange) {
     }
 
     if (addSelect) {
-      const onScreen = new Set(screen.fields.map(r => r.field.id));
+      const onScreen = new Set(screen.fields.map(r => r.field));
       const available = allFields.filter(f => !onScreen.has(f.id));
       addSelect.replaceChildren(...available.map(f => new Option(`${f.name} · ${Logic.FIELD_TYPE_LABEL[f.field_type]}`, f.id)));
       const none = !available.length;
