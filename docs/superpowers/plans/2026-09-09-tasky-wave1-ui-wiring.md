@@ -1467,7 +1467,15 @@ class ProjectNotArchived(BasePermission):
     etc. would become unreachable the moment a project is archived, and an
     archived project could never be reversed. See boards/views.py for where
     each nested viewset's `initial()` override already resolves the right
-    object (a Project, a Board, or the row itself) for this to check."""
+    object (a Project, a Board, or the row itself) for this to check.
+
+    Object-level only: it never fires for a flat POST whose parent comes
+    from the request body rather than the URL (no object exists yet for
+    DRF to resolve), so BoardViewSet.perform_create and
+    WorkItemViewSet.perform_create each carry their own explicit guard
+    instead. Adding this class to a future flat-collection viewset's
+    permission_classes is not enough on its own — check whether its
+    create path needs the same explicit guard."""
 
     message = "This project is archived and read-only. Unarchive it first."
 
@@ -1707,6 +1715,27 @@ def test_removing_a_member_still_works_once_a_project_is_archived(auth_client, p
     auth_client.post(f"/api/projects/{project.id}/archive/")
     response = auth_client.delete(f"/api/projects/{project.id}/members/{other_user.id}/")
     assert response.status_code == 204
+    assert not ProjectMembership.objects.filter(project=project, user=other_user).exists()
+
+
+@pytest.mark.django_db
+def test_deleting_a_work_item_link_is_blocked_once_the_project_is_archived(auth_client, project, user):
+    """The one hand-written (non-declarative) enforcement point in this
+    change — WorkItemLinkViewSet.check_object_permissions — needs its own
+    test; nothing else exercises it."""
+    board = Board.objects.create(name="Board", created_by=user, project=project)
+    seed_default_statuses(project)
+    status = WorkItemStatus.objects.filter(project=project, category="todo").first()
+    item_a = WorkItem.objects.create(board=board, title="A", status=status)
+    item_b = WorkItem.objects.create(board=board, title="B", status=status)
+    link_response = auth_client.post(f"/api/work-items/{item_a.id}/links/", {"item": item_b.id})
+    link_id = link_response.json()["id"]
+
+    auth_client.post(f"/api/projects/{project.id}/archive/")
+
+    response = auth_client.delete(f"/api/work-item-links/{link_id}/")
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This project is archived and read-only. Unarchive it first."
 ```
 
 - [ ] **Step 6: Run the tests, confirm the new ones fail and the old suite still passes elsewhere**
