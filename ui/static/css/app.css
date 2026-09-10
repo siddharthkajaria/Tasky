@@ -1023,3 +1023,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Project archive (sub-project 9) ---------------------------------------- */
+
+.archived-toggle { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; font-size: 13px; color: var(--ink-2); }
+
+.role-badge.is-inactive { color: var(--danger); border-color: var(--danger); background: var(--danger-w); }

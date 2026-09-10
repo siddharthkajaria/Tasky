@@ -225,7 +225,19 @@ async function viewProjects() {
   const invSection = main.querySelector('[data-invitations]');
   const invList = main.querySelector('[data-invite-list]');
   const list = main.querySelector('[data-list]');
+  const includeArchived = main.querySelector('[data-include-archived]');
   list.innerHTML = skeletonList(3);
+
+  includeArchived.addEventListener('change', async () => {
+    list.innerHTML = skeletonList(3);
+    try {
+      const projects = await data.listProjects(includeArchived.checked);
+      paintProjectRows(list, projects);
+    } catch (err) {
+      if (err && err.sessionExpired) return handle(err);
+      errorState(list, err, () => includeArchived.dispatchEvent(new Event('change')));
+    }
+  });
 
   main.querySelector('[data-create-project]').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -262,18 +274,22 @@ async function viewProjects() {
       stagger(rows);
     }
 
-    if (!projects.length) {
-      list.innerHTML =
-        '<li class="empty">No projects yet. Create one above, or wait for an invitation.</li>';
-      return;
-    }
-    const rows = projects.map(projectRow);
-    list.replaceChildren(...rows);
-    stagger(rows);
+    paintProjectRows(list, projects);
   } catch (err) {
     if (err && err.sessionExpired) return handle(err);
     errorState(list, err, viewProjects);
   }
+}
+
+function paintProjectRows(list, projects) {
+  if (!projects.length) {
+    list.innerHTML =
+      '<li class="empty">No projects yet. Create one above, or wait for an invitation.</li>';
+    return;
+  }
+  const rows = projects.map(projectRow);
+  list.replaceChildren(...rows);
+  stagger(rows);
 }
 
 function invitationRow(invite) {
@@ -316,6 +332,7 @@ function projectRow(project) {
     `<span class="key-pill">${esc(project.key)}</span>` +
     `<span class="desc">${esc(project.description)}</span>` +
     `<span class="role-badge role-${esc(project.my_role)}">${esc(Logic.ROLE_LABEL[project.my_role] || '—')}</span>` +
+    (project.is_archived ? `<span class="role-badge is-inactive">Archived</span>` : '') +
     `<span class="tally mono">${project.member_count} member${project.member_count === 1 ? '' : 's'}</span>`;
   li.appendChild(a);
   return li;
@@ -334,7 +351,7 @@ async function viewProject(projectId) {
   try {
     [project, myProjects] = await Promise.all([
       data.getProject(projectId),
-      data.listProjects(),
+      data.listProjects(true),
     ]);
   } catch (err) {
     if (err && err.sessionExpired) return handle(err);
@@ -351,6 +368,7 @@ async function viewProject(projectId) {
   const roleBadge = main.querySelector('[data-my-role]');
   roleBadge.textContent = Logic.ROLE_LABEL[project.my_role] || '—';
   roleBadge.classList.add(`role-${project.my_role}`);
+  main.querySelector('[data-archived-badge]').hidden = !project.is_archived;
 
   const switcher = main.querySelector('[data-switcher]');
   switcher.replaceChildren(...myProjects.map(p => {
@@ -386,6 +404,20 @@ function renderProjectActions(main, project) {
 
   if (Logic.canInvite(role)) add('Invite', 'btn', () => openInviteModal(project));
   if (Logic.canTransferOwnership(role)) add('Transfer ownership', 'btn', () => openTransferModal(project));
+
+  if (Logic.canManageProjectArchive(role)) {
+    add(project.is_archived ? 'Unarchive project' : 'Archive project', 'btn btn-quiet', async () => {
+      try {
+        const updated = project.is_archived
+          ? await data.unarchiveProject(project.id)
+          : await data.archiveProject(project.id);
+        toast(project.is_archived ? 'Project unarchived' : 'Project archived');
+        project.is_archived = updated.is_archived;
+        main.querySelector('[data-archived-badge]').hidden = !project.is_archived;
+        renderProjectActions(main, project);
+      } catch (err) { handle(err); }
+    });
+  }
 
   /* No "Leave" for the Owner: the API rejects it with 400 until ownership has
      been transferred, so offering the button would only ever be a dead end. */

@@ -76,6 +76,7 @@
     </form>
     <p class="form-error" data-create-error hidden></p>
 
+    <label class="archived-toggle"><input type="checkbox" data-include-archived> Show archived</label>
     <ul class="project-list" data-list></ul>
   </div>
 </template>
@@ -89,6 +90,7 @@
           <h1 data-project-name></h1>
           <span class="key-pill" data-project-key></span>
           <span class="role-badge" data-my-role></span>
+          <span class="role-badge is-inactive" data-archived-badge hidden>Archived</span>
         </div>
         <p class="page-sub" data-project-desc></p>
       </div>
