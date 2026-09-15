@@ -1393,14 +1393,24 @@ function applyCustomFieldErrors(scope, errors) {
     if (errorEl) { errorEl.textContent = errors; errorEl.hidden = false; }
     return;
   }
+  // Not every key is guaranteed to land on a rendered control — the screen
+  // may have changed between render and save, or may have failed to load at
+  // all while the server still validated custom_fields. Anything that can't
+  // be pinned to a field is surfaced at the form level instead of being
+  // silently dropped.
+  const unpinned = [];
   Object.keys(errors || {}).forEach(fieldId => {
     const el = scope.querySelector(`[data-cf-error="${fieldId}"]`);
-    if (!el) return;
+    if (!el) { unpinned.push(errors[fieldId]); return; }
     el.textContent = errors[fieldId];
     el.hidden = false;
     const wrap = scope.querySelector(`[data-cf-wrap="${fieldId}"]`);
     if (wrap) wrap.classList.add('has-error');
   });
+  if (unpinned.length) {
+    const errorEl = scope.querySelector('[data-error]') || scope.querySelector('.form-error');
+    if (errorEl) { errorEl.textContent = unpinned.join(' '); errorEl.hidden = false; }
+  }
   const first = scope.querySelector('.cf-field.has-error');
   if (first) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
@@ -2039,7 +2049,7 @@ async function openWorkItemModal(itemId) {
 
     `<div class="block">` +
       `<h2>Components</h2>` +
-      `<div class="chip-check-list">${
+      `<div class="chip-check-list" data-components>${
         componentChips || '<p class="empty-inline">No components on this project yet. Add them on the project page.</p>'
       }</div>` +
     `</div>` +
@@ -2078,11 +2088,6 @@ async function openWorkItemModal(itemId) {
   const labelInput = labelChipInput((item.labels_detail || []).map(l => l.name), allLabels);
   modal.querySelector('[data-labels-container]').replaceChildren(labelInput.el);
 
-  modal.querySelectorAll('.chip-check').forEach(chip => {
-    const input = chip.querySelector('input');
-    input.addEventListener('change', () => chip.classList.toggle('is-checked', input.checked));
-  });
-
   bindChipChecks(modal);
 
   modal.querySelector('[data-save]').addEventListener('click', async () => {
@@ -2091,6 +2096,7 @@ async function openWorkItemModal(itemId) {
     saveBtn.disabled = true;
 
     const parentSelect = modal.querySelector('[name=parent]');
+    const componentsList = modal.querySelector('[data-components]');
     const fields = Logic.editableWorkItemFields({
       title: modal.querySelector('[name=title]').value,
       description: modal.querySelector('[name=description]').value,
@@ -2098,7 +2104,7 @@ async function openWorkItemModal(itemId) {
       due_date: modal.querySelector('[name=due_date]').value,
       assignee: modal.querySelector('[name=assignee]').value,
       parent: parentSelect ? parentSelect.value : '',
-      components: Array.from(modal.querySelectorAll('.chip-check input:checked')).map(i => i.value),
+      components: componentsList ? Array.from(componentsList.querySelectorAll('.chip-check input:checked')).map(i => i.value) : [],
     }, item.item_type);
     fields.labels = labelInput.getNames();
     if (screenRows.length) fields.custom_fields = readCustomFieldInputs(modal, screenRows);
