@@ -169,5 +169,12 @@ const Api = (() => {
       const screenId = assignments[itemType];
       return screenId ? screens.find(s => s.id === screenId) || null : null;
     },
+
+    /* Releases ------------------------------------------------------------ */
+    listReleases:  (projectId)          => request(`/api/projects/${projectId}/releases/`),
+    createRelease: (projectId, fields)  => request(`/api/projects/${projectId}/releases/`, { method: 'POST', body: fields }),
+    updateRelease: (projectId, id, fields) => request(`/api/projects/${projectId}/releases/${id}/`, { method: 'PATCH', body: fields }),
+    deleteRelease: (projectId, id)      => request(`/api/projects/${projectId}/releases/${id}/`, { method: 'DELETE' }),
+    listReleaseWorkItems: (projectId, id) => request(`/api/projects/${projectId}/releases/${id}/work-items/`),
   };
 })();

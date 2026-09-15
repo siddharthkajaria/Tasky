@@ -141,6 +141,11 @@ const Store = (() => {
     return screenAssignments[projectId];
   }
 
+  let releases = [];
+  let nextReleaseId = 9000;
+  const releaseById = (rid) => releases.find(r => r.id === Number(rid)) || null;
+  const releaseOut = (r) => Object.assign({}, r);
+
   const fieldOut = (f) => Object.assign({}, f, {
     options: optionsForField(f.id),
     created_by: userById(f.created_by),
@@ -207,7 +212,7 @@ const Store = (() => {
   function seed(o) {
     const item = Object.assign({
       description: '', status: P1_TODO, priority: 2, due_date: null, assignee: null,
-      parent: null, position: 0, components: [], labels: [], custom_fields: {}, created_by: 1,
+      parent: null, position: 0, components: [], labels: [], custom_fields: {}, release: null, created_by: 1,
       created_at: now(), updated_at: now(),
     }, o);
     workItems.push(item);
@@ -331,6 +336,7 @@ const Store = (() => {
       labels_detail: labels.filter(l => (w.labels || []).includes(l.id)),
       status_detail: statusById(w.status),
       custom_fields: w.custom_fields || {},
+      release_detail: w.release ? releaseOut(releaseById(w.release)) : null,
     });
   }
 
@@ -781,6 +787,13 @@ const Store = (() => {
       customFieldsValue = result.value;
     }
 
+    if (fields.release) {
+      const release = releaseById(fields.release);
+      if (!release || release.project !== board.project) {
+        return fail(400, { release: "Release must belong to this item's project." });
+      }
+    }
+
     const siblings = workItems.filter(w => w.board === board.id && w.status === status);
     const item = seed({
       id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
@@ -788,7 +801,8 @@ const Store = (() => {
       description: fields.description || '', status, position: siblings.length,
       priority: fields.priority || 2, due_date: fields.due_date || null,
       assignee: fields.assignee || null, parent: parent ? parent.id : null,
-      components: fields.components || [], labels: labelIds, custom_fields: customFieldsValue, created_by: me.id,
+      components: fields.components || [], labels: labelIds, custom_fields: customFieldsValue,
+      release: fields.release ? Number(fields.release) : null, created_by: me.id,
     });
     return wait(itemOut(item));
   }
@@ -856,6 +870,17 @@ const Store = (() => {
       const result = validateCustomFields(boardProject(item.board), item.item_type, fields.custom_fields, item.custom_fields);
       if (result.error) return fail(400, result.error);
       item.custom_fields = result.value;
+    }
+    if ('release' in fields) {
+      if (fields.release) {
+        const release = releaseById(fields.release);
+        if (!release || release.project !== boardProject(item.board)) {
+          return fail(400, { release: "Release must belong to this item's project." });
+        }
+        item.release = release.id;
+      } else {
+        item.release = null;
+      }
     }
     item.updated_at = now();
 
@@ -1314,6 +1339,79 @@ const Store = (() => {
     return screenId ? screenOut(screenById(screenId)) : null;
   }
 
+  /* ---- releases ------------------------------------------------------------ */
+
+  function listReleases(projectId) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    if (!myRole(projectId)) return denied();
+    return wait(
+      releases.filter(r => r.project === Number(projectId))
+              .sort((a, b) => (a.release_date || '￿').localeCompare(b.release_date || '￿') || a.name.localeCompare(b.name))
+              .map(releaseOut)
+    );
+  }
+
+  function createRelease(projectId, fields) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (projectById(projectId).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageReleases(role)) return fail(403, { detail: "You don't have permission to manage releases." });
+    const name = (fields.name || '').trim();
+    if (!name) return fail(400, { name: 'This field may not be blank.' });
+    if (releases.some(r => r.project === Number(projectId) && r.name.toLowerCase() === name.toLowerCase())) {
+      return fail(400, { name: `"${name}" already exists.` });
+    }
+    const release = {
+      id: ++nextReleaseId, project: Number(projectId), name,
+      status: 'unreleased', release_date: fields.release_date || null,
+    };
+    releases.push(release);
+    return wait(releaseOut(release));
+  }
+
+  function updateRelease(projectId, releaseId, fields) {
+    const release = releaseById(releaseId);
+    if (!release || release.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(release.project);
+    if (!role) return denied();
+    if (projectById(release.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageReleases(role)) return fail(403, { detail: "You don't have permission to manage releases." });
+    if ('name' in fields) {
+      const trimmed = (fields.name || '').trim();
+      if (!trimmed) return fail(400, { name: 'This field may not be blank.' });
+      if (releases.some(r => r.id !== release.id && r.project === release.project && r.name.toLowerCase() === trimmed.toLowerCase())) {
+        return fail(400, { name: `"${trimmed}" already exists.` });
+      }
+      release.name = trimmed;
+    }
+    if ('status' in fields) {
+      if (!Logic.RELEASE_STATUSES.includes(fields.status)) return fail(400, { status: `"${fields.status}" is not a valid choice.` });
+      release.status = fields.status;
+    }
+    if ('release_date' in fields) release.release_date = fields.release_date || null;
+    return wait(releaseOut(release));
+  }
+
+  function deleteRelease(projectId, releaseId) {
+    const release = releaseById(releaseId);
+    if (!release || release.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(release.project);
+    if (!role) return denied();
+    if (projectById(release.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageReleases(role)) return fail(403, { detail: "You don't have permission to manage releases." });
+    releases = releases.filter(r => r.id !== release.id);
+    workItems.forEach(w => { if (w.release === release.id) w.release = null; });
+    return wait(null);
+  }
+
+  function listReleaseWorkItems(projectId, releaseId) {
+    const release = releaseById(releaseId);
+    if (!release || release.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    if (!myRole(release.project)) return denied();
+    return wait(workItems.filter(w => w.release === release.id).map(itemOut));
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1395,6 +1493,7 @@ const Store = (() => {
     listScreens, createScreen, getScreen, renameScreen, deleteScreen,
     addScreenField, setScreenFieldRequired, moveScreenField, removeScreenField,
     listScreenAssignments, setScreenAssignments, getScreenForItemType,
+    listReleases, createRelease, updateRelease, deleteRelease, listReleaseWorkItems,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
   };
