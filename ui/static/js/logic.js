@@ -80,6 +80,15 @@ const Logic = (() => {
   // Components, Statuses, Releases, Automation, Sprints.
   const canManageScreenAssignments = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Releases (sub-project 7) --------------------------------------------
+     Same governance tier as Components/Statuses: Owner/Admin manage the
+     release itself; any project member can tag a work item with an
+     existing one — an ordinary edit, no separate check. Flat status, no
+     transition rules, same simplification Workflows itself uses. */
+  const RELEASE_STATUSES = ['unreleased', 'released', 'archived'];
+  const RELEASE_STATUS_LABEL = { unreleased: 'Unreleased', released: 'Released', archived: 'Archived' };
+  const canManageReleases = (role) => role === 'owner' || role === 'admin';
+
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
   function isIsoDate(value) {
     const s = String(value);
@@ -349,6 +358,7 @@ const Logic = (() => {
     canManageProjectArchive,
     FIELD_TYPES, FIELD_TYPE_LABEL, FIELD_TYPE_HINT, fieldHasOptions, isMultiValue,
     canManageDefinitions, canManageScreenAssignments,
+    RELEASE_STATUSES, RELEASE_STATUS_LABEL, canManageReleases,
     isIsoDate, isBlankValue, fieldValueError, screenValueErrors,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
