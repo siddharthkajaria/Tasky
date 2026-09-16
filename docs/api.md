@@ -381,7 +381,10 @@ See `GET/POST /api/work-items/{id}/links/` above for listing/creating. Self-link
 | Method | Path | Notes |
 |---|---|---|
 | GET/POST | `/api/work-items/{id}/comments/` | POST takes `{body}`; author comes from the session |
+| PATCH | `/api/comments/{id}/` | takes `{body}`; author-only, **with no authorless exception** — unlike delete, a comment whose author account was deleted (`author` is `null`) cannot be edited by anyone, since there is nobody left to attribute the edit to; a blank `body` is rejected with `400`; sets `edited_at` |
 | DELETE | `/api/comments/{id}/` | if the comment has an author, only that author can delete it (otherwise 403); if the comment's author account has been deleted (`author` is `null`), any signed-in user who is a member of the comment's project can delete it (403 for non-members) |
+
+**`edited_at` is `null` until the first edit**, then the timestamp of the most recent one. It is never set on creation.
 
 ## Attachments
 | Method | Path | Notes |

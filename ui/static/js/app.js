@@ -1389,16 +1389,39 @@ function commentEl(comment, itemId, modal) {
     ? esc(comment.author.display_name || comment.author.username)
     : 'Deleted user';
   /* An authorless comment is deletable by any member, exactly as the API
-     allows — its owner's account is gone. */
+     allows — its owner's account is gone. Editing has no such exception. */
   const mine = !comment.author || (me && comment.author.id === me.id);
+  const canEdit = Logic.canEditComment(comment, me && me.id);
 
   li.innerHTML =
     `<div class="comment-head">` +
       `<span class="author">${author}</span>` +
       `<time datetime="${esc(comment.created_at)}">${esc(String(comment.created_at).slice(0, 10))}</time>` +
+      (comment.edited_at ? `<span class="edited-tag">(edited)</span>` : '') +
       (mine ? `<button class="btn btn-danger" type="button" data-del>Delete</button>` : '') +
     `</div>` +
-    `<p class="comment-body">${esc(comment.body)}</p>`;
+    `<p class="comment-body"${canEdit ? ' contenteditable="true" role="textbox" aria-label="Comment" data-edit' : ''}>${esc(comment.body)}</p>`;
+
+  const bodyEl = li.querySelector('[data-edit]');
+  if (bodyEl) {
+    bodyEl.addEventListener('blur', async () => {
+      const value = bodyEl.textContent.trim();
+      if (!value || value === comment.body) { bodyEl.textContent = comment.body; return; }
+      try {
+        const updated = await data.updateComment(comment.id, value);
+        comment.body = updated.body;
+        comment.edited_at = updated.edited_at;
+        loadComments(itemId, modal);
+      } catch (err) {
+        bodyEl.textContent = comment.body;
+        handle(err);
+      }
+    });
+    bodyEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); bodyEl.blur(); }
+      if (e.key === 'Escape') { bodyEl.textContent = comment.body; bodyEl.blur(); }
+    });
+  }
 
   const del = li.querySelector('[data-del]');
   if (del) del.addEventListener('click', async () => {

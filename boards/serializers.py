@@ -476,8 +476,8 @@ class CommentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Comment
-        fields = ["id", "card", "author", "body", "created_at"]
-        read_only_fields = ["card"]
+        fields = ["id", "card", "author", "body", "created_at", "edited_at"]
+        read_only_fields = ["card", "edited_at"]
 
     def validate_body(self, value: str) -> str:
         if not value.strip():

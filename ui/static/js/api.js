@@ -119,6 +119,7 @@ const Api = (() => {
     /* Comments ---------------------------------------------------------- */
     listComments:  (itemId)       => request(`/api/work-items/${itemId}/comments/`),
     createComment: (itemId, body) => request(`/api/work-items/${itemId}/comments/`, { method: 'POST', body: { body } }),
+    updateComment: (id, body)     => request(`/api/comments/${id}/`, { method: 'PATCH', body: { body } }),
     deleteComment: (id)           => request(`/api/comments/${id}/`, { method: 'DELETE' }),
 
     listUsers: () => request('/api/users/'),

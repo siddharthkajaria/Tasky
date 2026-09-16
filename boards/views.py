@@ -523,14 +523,23 @@ class WorkItemViewSet(viewsets.ModelViewSet):
         return Response(AttachmentSerializer(item.attachments.select_related("uploaded_by"), many=True).data)
 
 
-class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
-    """Deletion only — comments are created through the work item's own endpoint."""
+class CommentViewSet(mixins.UpdateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    """Editing and deletion only — comments are created through the work item's own endpoint."""
 
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated, IsProjectMember]
 
     def get_queryset(self):
         return Comment.objects.select_related("author", "card__board__project")
+
+    def perform_update(self, serializer):
+        # Unlike delete, editing has no authorless exception — there is no
+        # one left to attribute the edit to, so a comment with a deleted
+        # author simply can't be edited by anyone.
+        instance = serializer.instance
+        if instance.author_id is None or instance.author_id != self.request.user.id:
+            raise PermissionDenied("You can only edit your own comments.")
+        serializer.save(edited_at=timezone.now())
 
     def perform_destroy(self, instance):
         # An authorless comment (its author's account was deleted, which

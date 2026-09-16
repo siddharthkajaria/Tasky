@@ -32,6 +32,12 @@ const Logic = (() => {
   const canLeave = (actingRole) => actingRole === 'admin' || actingRole === 'member';
   const canManageComponents = (role) => role === 'owner' || role === 'admin';
 
+  /* Comment edit is author-only, with no authorless exception — unlike
+     delete, there is nobody left to attribute an edit to once the author's
+     account is gone. Mirrors CommentViewSet.perform_update. */
+  const canEditComment = (comment, userId) =>
+    Boolean(comment.author) && Boolean(userId) && comment.author.id === userId;
+
   /* ---- Work item hierarchy --------------------------------------------- */
 
   const ITEM_TYPES = ['epic', 'story', 'task', 'bug', 'subtask'];
@@ -197,6 +203,7 @@ const Logic = (() => {
     ROLE_LABEL,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
+    canEditComment,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
     requiresParent, canHaveParent, isValidParent, parentCandidates,
     groupByStatus, findItem, applyMove, removeItem, moveWorkItem,

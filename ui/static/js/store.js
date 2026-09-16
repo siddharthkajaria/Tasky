@@ -230,7 +230,7 @@ const Store = (() => {
 
   const commentOut = (c) => ({
     id: c.id, card: c.card, author: c.author === null ? null : userById(c.author),
-    body: c.body, created_at: c.created_at,
+    body: c.body, created_at: c.created_at, edited_at: c.edited_at || null,
   });
 
   // Each row carries the OTHER side, already resolved, as the real API does.
@@ -726,8 +726,24 @@ const Store = (() => {
        whitespace-only comment fails as blank rather than reaching the
        serializer's "cannot be empty" message. Same wording here. */
     if (!body || !body.trim()) return fail(400, { body: 'This field may not be blank.' });
-    const comment = { id: id(), card: item.id, author: me.id, body: body.trim(), created_at: now() };
+    const comment = {
+      id: id(), card: item.id, author: me.id, body: body.trim(), created_at: now(), edited_at: null,
+    };
     comments.push(comment);
+    return wait(commentOut(comment));
+  }
+
+  function updateComment(commentId, body) {
+    const comment = comments.find(c => c.id === Number(commentId));
+    if (!comment) return fail(404, { detail: 'Not found.' });
+    // Author-only, no authorless exception — unlike delete, there is nobody
+    // left to attribute an edit to once the author's account is gone.
+    if (comment.author === null || !me || comment.author !== me.id) {
+      return fail(403, { detail: 'You can only edit your own comments.' });
+    }
+    if (!body || !body.trim()) return fail(400, { body: 'This field may not be blank.' });
+    comment.body = body.trim();
+    comment.edited_at = now();
     return wait(commentOut(comment));
   }
 
@@ -771,7 +787,7 @@ const Store = (() => {
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
     listLinks, createLink, deleteLink,
-    listComments, createComment, deleteComment,
+    listComments, createComment, updateComment, deleteComment,
     listUsers, myTasks,
   };
 })();

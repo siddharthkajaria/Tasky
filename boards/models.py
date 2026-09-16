@@ -386,6 +386,9 @@ class Comment(models.Model):
     )
     body = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # Set explicitly on edit, not auto_now — auto_now would also fire on the
+    # creating save() and make every comment look edited from the start.
+    edited_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["created_at", "id"]
