@@ -221,6 +221,11 @@ class CustomFieldSerializer(serializers.ModelSerializer):
         model = CustomField
         fields = ["id", "name", "field_type", "options", "created_by", "created_at"]
         read_only_fields = ["created_by", "created_at"]
+        # `name` is `unique=True` on the model, so DRF auto-attaches a
+        # `UniqueValidator` that runs BEFORE `validate_name` below and short-
+        # circuits it with its own generic message. Disabling it here is what
+        # lets the hand-written, case-insensitive check actually execute.
+        extra_kwargs = {"name": {"validators": []}}
 
     def validate_name(self, value):
         clean = value.strip()
@@ -249,6 +254,11 @@ class ScreenSerializer(serializers.ModelSerializer):
     class Meta:
         model = Screen
         fields = ["id", "name", "fields"]
+        # Same reasoning as CustomFieldSerializer above: `name` is
+        # `unique=True` on the model, so disable DRF's auto-`UniqueValidator`
+        # so the hand-written, case-insensitive `validate_name` below is the
+        # one that actually runs.
+        extra_kwargs = {"name": {"validators": []}}
 
     def validate_name(self, value):
         clean = value.strip()
