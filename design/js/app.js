@@ -1955,19 +1955,31 @@ async function viewSearch() {
   });
 }
 
+// Shared between the Search screen's result rows and the work-item Link
+// picker's type-ahead results (openLinkModal, below) — same key/type/title
+// shape either way. The picker shows the board name instead of the status,
+// since its whole point is telling same-titled items in different projects
+// apart.
+function searchResultContent(item, opts) {
+  const showBoard = opts && opts.showBoard;
+  const who = item.assignee_detail
+    ? `<span class="who-chip">${esc(item.assignee_detail.display_name)}</span>` : '';
+  const meta = showBoard
+    ? `${esc(item.project.key)} · ${esc(item.board.name)}`
+    : `${esc(item.project.key)} · ${esc(item.status_detail.name)}`;
+  return (
+    `<span class="key-pill">${esc(item.key)}</span>` +
+    `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
+    `<span class="search-title">${esc(item.title)}</span>` +
+    `<span class="search-meta">${meta}</span>` +
+    who
+  );
+}
+
 function searchResultRow(item) {
   const li = document.createElement('li');
   li.className = 'search-result-row';
-  const who = item.assignee_detail
-    ? `<span class="who-chip">${esc(item.assignee_detail.display_name)}</span>` : '';
-  li.innerHTML =
-    `<a href="#/projects/${item.project.id}/boards/${item.board.id}">` +
-      `<span class="key-pill">${esc(item.key)}</span>` +
-      `<span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span>` +
-      `<span class="search-title">${esc(item.title)}</span>` +
-      `<span class="search-meta">${esc(item.project.key)} · ${esc(item.status_detail.name)}</span>` +
-      who +
-    `</a>`;
+  li.innerHTML = `<a href="#/projects/${item.project.id}/boards/${item.board.id}">${searchResultContent(item)}</a>`;
   return li;
 }
 
@@ -3056,39 +3068,87 @@ async function loadLinks(item, modal) {
   }
 }
 
-async function openLinkModal(item, parentModal) {
-  let candidates;
-  try {
-    const boardItems = await Store.listBoardWorkItems(item.board);
-    candidates = boardItems.filter(i => i.id !== item.id);
-  } catch (err) { return handle(err); }
+const LINK_SEARCH_DEBOUNCE_MS = 300;
 
-  const body = !candidates.length
-    ? `<div class="modal-head"><p class="eyebrow">Link ${esc(item.key)}</p><button class="btn btn-quiet" data-close>Close</button></div>
-       <p class="empty">No other items on this board to link to yet.</p>`
-    : `<div class="modal-head"><p class="eyebrow">Link ${esc(item.key)}</p><button class="btn btn-quiet" data-close>Close</button></div>
-       <label class="field"><span>Item</span><select name="target">${
-         candidates.map(c => `<option value="${c.id}">${esc(c.key)} — ${esc(c.title)}</option>`).join('')
-       }</select></label>
-       <p class="form-error" data-error hidden></p>
-       <div class="modal-actions"><button class="btn btn-primary" data-send>Link</button><button class="btn" data-close>Cancel</button></div>`;
+// This used to build its candidate list from Store.listBoardWorkItems —
+// the current board only. The real backend only requires membership in
+// both items' projects to link them, so the production picker (ui/) now
+// searches across every board via /api/search/ instead — see that file's
+// openLinkModal for the full writeup. Mirroring that here with a type-ahead
+// over Store.search, so the prototype demonstrates the same interaction.
+async function openLinkModal(item, parentModal) {
+  const body =
+    `<div class="modal-head"><p class="eyebrow">Link ${esc(item.key)}</p><button class="btn btn-quiet" data-close>Close</button></div>
+     <label class="field"><span>Item</span><input type="text" data-link-search placeholder="Search by title or key…" autocomplete="off"></label>
+     <ul class="search-results" data-link-results></ul>
+     <p class="form-error" data-error hidden></p>
+     <div class="modal-actions"><button class="btn" data-close>Cancel</button></div>`;
 
   const { modal, close } = openModal(body);
-  const sendBtn = modal.querySelector('[data-send]');
-  if (!sendBtn) return;
+  const input = modal.querySelector('[data-link-search]');
+  const resultsEl = modal.querySelector('[data-link-results]');
+  const errorEl = modal.querySelector('[data-error]');
+  if (!input || !resultsEl) return;
 
-  sendBtn.addEventListener('click', async () => {
-    const errorEl = modal.querySelector('[data-error]');
-    const targetId = modal.querySelector('[name=target]').value;
-    try {
-      await Store.createLink(item.id, Number(targetId));
-      close();
-      toast('Linked');
-      loadLinks(item, parentModal);
-    } catch (err) {
-      errorEl.textContent = errorText(err);
-      errorEl.hidden = false;
+  function renderHint(text) {
+    resultsEl.innerHTML = `<li class="empty-inline">${esc(text)}</li>`;
+  }
+
+  function pick(candidate) {
+    return async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await Store.createLink(item.id, candidate.id);
+        close();
+        toast('Linked');
+        loadLinks(item, parentModal);
+      } catch (err) {
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+      }
+    };
+  }
+
+  function linkPickerRow(candidate) {
+    const li = document.createElement('li');
+    li.className = 'search-result-row';
+    li.innerHTML = `<a href="#" data-pick>${searchResultContent(candidate, { showBoard: true })}</a>`;
+    li.querySelector('[data-pick]').addEventListener('click', pick(candidate));
+    return li;
+  }
+
+  renderHint('Type at least 2 characters to search.');
+
+  // Debounced, and guarded the same way ui/static/js/app.js's copy of this
+  // is: `searchSeq` makes a late-resolving stale response lose to whichever
+  // search started last, and `document.body.contains(modal)` stops a
+  // pending timer or in-flight request from writing into a modal the user
+  // has already closed (Escape, backdrop, Cancel, or a successful pick).
+  let debounceTimer = null;
+  let searchSeq = 0;
+
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const value = input.value.trim();
+    if (value.length < 2) {
+      renderHint('Type at least 2 characters to search.');
+      return;
     }
+    debounceTimer = setTimeout(() => {
+      if (!document.body.contains(modal)) return;
+      const mySeq = ++searchSeq;
+      renderHint('Searching…');
+      Store.search({ q: value }).then(({ results }) => {
+        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        const candidates = results.filter(r => r.id !== item.id);
+        if (!candidates.length) { renderHint('No matching items found.'); return; }
+        resultsEl.replaceChildren(...candidates.map(linkPickerRow));
+      }).catch((err) => {
+        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        renderHint(errorText(err));
+      });
+    }, LINK_SEARCH_DEBOUNCE_MS);
   });
 }
 
