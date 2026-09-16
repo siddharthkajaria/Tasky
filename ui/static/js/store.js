@@ -831,11 +831,6 @@ const Store = (() => {
     }
 
     const siblings = workItems.filter(w => w.board === board.id && w.status === status);
-    // A freshly created work item defaults to the backlog (sprint: null) —
-    // appended to the end, the same way scheduleWorkItem computes a default
-    // position when none is given, so it doesn't collide with (or sort
-    // before) whatever's already there.
-    const backlogPosition = workItems.filter(w => w.board === board.id && w.sprint === null).length;
     const item = seed({
       id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
       board: board.id, item_type: itemType, title: fields.title.trim(),
@@ -843,9 +838,18 @@ const Store = (() => {
       priority: fields.priority || 2, due_date: fields.due_date || null,
       assignee: fields.assignee || null, parent: parent ? parent.id : null,
       components: fields.components || [], labels: labelIds, custom_fields: customFieldsValue,
-      release: fields.release ? Number(fields.release) : null, backlog_position: backlogPosition,
+      release: fields.release ? Number(fields.release) : null,
+      // A freshly created work item defaults to the backlog (sprint: null),
+      // appended to the end. backlog_position isn't contiguous after a
+      // delete (gaps are normal), so a mere count of the current backlog
+      // could under-allocate and land the new item BEFORE a real item past
+      // a gap. MAX_SAFE_INTEGER guarantees it sorts after everything, then
+      // renumberBacklogBucket below collapses the bucket to a clean 0..n-1
+      // order — same pattern as completeSprint's straggler return.
+      backlog_position: Number.MAX_SAFE_INTEGER,
       created_by: me.id,
     });
+    renumberBacklogBucket(board.id, null);
     return wait(itemOut(item));
   }
 
@@ -1790,11 +1794,20 @@ const Store = (() => {
         id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
         board: board.id, item_type: itemType, title, description: get('description'),
         status: statusId, position: siblings.length, priority, due_date: dueDate, assignee,
-        components: componentIds, labels: resolvedLabels.ids, created_by: me.id,
+        components: componentIds, labels: resolvedLabels.ids,
+        // Same fix as createWorkItem: a mere count would under-allocate once
+        // a prior delete has opened a gap in backlog_position. Keying off
+        // the row's own index (not a running "imported" counter) keeps
+        // successfully-imported rows in their original CSV order relative
+        // to each other even if an earlier row failed; the renumber after
+        // the loop collapses the whole bucket to a clean 0..n-1 order.
+        backlog_position: Number.MAX_SAFE_INTEGER - (dataRows.length - i),
+        created_by: me.id,
       });
       imported++;
     });
 
+    renumberBacklogBucket(board.id, null);
     return { imported, failed };
   }
 
