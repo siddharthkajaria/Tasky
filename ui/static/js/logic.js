@@ -187,6 +187,58 @@ const Logic = (() => {
     return errors;
   }
 
+  /* ---- Automation (sub-project 11) ------------------------------------------
+     Governance reuses the existing Owner/Admin tier. Only two triggers and
+     four actions in this first pass — see the spec's Scope decisions for
+     why a generic "field changed" trigger and multi-action rules are
+     deliberately out. */
+  const canManageAutomation = (role) => role === 'owner' || role === 'admin';
+
+  const AUTOMATION_TRIGGER_TYPES = ['work_item_created', 'status_changed'];
+  const AUTOMATION_TRIGGER_LABEL = { work_item_created: 'Work item created', status_changed: 'Status changed' };
+  const AUTOMATION_ACTION_TYPES = ['set_assignee', 'apply_label', 'remove_label', 'change_status'];
+  const AUTOMATION_ACTION_LABEL = {
+    set_assignee: 'Set assignee', apply_label: 'Apply label', remove_label: 'Remove label', change_status: 'Change status',
+  };
+
+  /* Plain-English summary of a rule's trigger/action, for the admin list —
+     takes a lookup function rather than a raw status id, so this stays
+     free of any dependency on the data layer's shape. `statusLookup(id)`
+     returns a status's name, or a placeholder if it's since been deleted
+     (deletion is blocked while a rule references it, per docs/api.md, but
+     a rule created before that guard existed — or restored via /admin/ —
+     could still reference a gone one). */
+  function describeAutomationRule(rule, statusLookup) {
+    let triggerText;
+    if (rule.trigger_type === 'work_item_created') {
+      const itemType = rule.trigger_filter && rule.trigger_filter.item_type;
+      triggerText = itemType ? `a ${ITEM_TYPE_LABEL[itemType] || itemType} is created` : 'any work item is created';
+    } else {
+      const f = rule.trigger_filter || {};
+      const from = f.from_status != null ? `"${statusLookup(f.from_status)}"` : 'any status';
+      let to = 'any status';
+      if (f.to_status != null) to = `"${statusLookup(f.to_status)}"`;
+      else if (f.to_category != null) to = `the ${CATEGORY_LABELS[f.to_category] || f.to_category} category`;
+      triggerText = `status moves from ${from} to ${to}`;
+    }
+
+    let actionText;
+    const cfg = rule.action_config || {};
+    if (rule.action_type === 'set_assignee') {
+      if (cfg.mode === 'actor') actionText = 'assign whoever triggered it';
+      else if (cfg.mode === 'unassign') actionText = 'clear the assignee';
+      else actionText = 'set the assignee';
+    } else if (rule.action_type === 'apply_label') {
+      actionText = `apply the "${cfg.label_name}" label`;
+    } else if (rule.action_type === 'remove_label') {
+      actionText = `remove the "${cfg.label_name}" label`;
+    } else {
+      actionText = `change status to "${statusLookup(cfg.status_id)}"`;
+    }
+
+    return `When ${triggerText}, ${actionText}.`;
+  }
+
   /* ---- Project roles --------------------------------------------------- */
 
   /* The permission matrix from the Projects & Membership spec. It is
@@ -382,6 +434,8 @@ const Logic = (() => {
     canDeleteAttachment,
     canManageSprints,
     isIsoDate, isBlankValue, fieldValueError, screenValueErrors,
+    canManageAutomation, AUTOMATION_TRIGGER_TYPES, AUTOMATION_TRIGGER_LABEL,
+    AUTOMATION_ACTION_TYPES, AUTOMATION_ACTION_LABEL, describeAutomationRule,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
