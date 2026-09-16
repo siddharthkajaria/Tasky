@@ -490,4 +490,4 @@ class AttachmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Attachment
-        fields = ["id", "work_item", "filename", "content_type", "size", "uploaded_by", "uploaded_at"]
+        fields = ["id", "work_item", "comment", "filename", "content_type", "size", "uploaded_by", "uploaded_at"]

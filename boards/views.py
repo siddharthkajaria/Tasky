@@ -547,6 +547,30 @@ class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
             raise PermissionDenied("You can only delete your own comments.")
         instance.delete()
 
+    @action(detail=True, methods=["get", "post"], parser_classes=[MultiPartParser])
+    def attachments(self, request, pk=None):
+        comment = self.get_object()
+
+        if request.method == "POST":
+            upload = request.FILES.get("file")
+            if not upload:
+                raise ValidationError({"file": "This field is required."})
+            if upload.size > MAX_ATTACHMENT_SIZE:
+                raise ValidationError({"file": "File exceeds the 25 MB limit."})
+            attachment = Attachment.objects.create(
+                comment=comment,
+                file=upload,
+                filename=upload.name,
+                content_type=upload.content_type or "",
+                size=upload.size,
+                uploaded_by=request.user,
+            )
+            return Response(AttachmentSerializer(attachment).data, status=201)
+
+        return Response(
+            AttachmentSerializer(comment.attachments.select_related("uploaded_by"), many=True).data
+        )
+
 
 class AttachmentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
     """Deletion and download only — attachments are created through the
@@ -556,7 +580,9 @@ class AttachmentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
 
     def get_queryset(self):
-        return Attachment.objects.select_related("uploaded_by", "work_item__board__project")
+        return Attachment.objects.select_related(
+            "uploaded_by", "work_item__board__project", "comment__card__board__project"
+        )
 
     def perform_destroy(self, instance):
         role = instance.project.memberships.get(user=self.request.user).role

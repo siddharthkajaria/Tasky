@@ -396,10 +396,19 @@ See `GET/POST /api/work-items/{id}/links/` above for listing/creating. Self-link
 | Method | Path | Notes |
 |---|---|---|
 | GET/POST | `/api/work-items/{id}/attachments/` | POST is `multipart/form-data` with a `file` field; any project member may upload; rejects with `400` if `file` is missing or exceeds the 25 MB cap |
+| GET/POST | `/api/comments/{id}/attachments/` | same shape and rules as the work-item route above — `multipart/form-data`, `file` field, 25 MB cap, any project member may upload |
 | DELETE | `/api/attachments/{id}/` | the uploader may delete their own upload, **and** any Owner/Admin of the project may delete anyone's — wider than Comment's uploader-only rule; 403 for a plain member deleting someone else's, and for a non-member entirely |
 | GET | `/api/attachments/{id}/download/` | streams the file bytes with `Content-Disposition: attachment` set to the original filename; membership-gated like every other endpoint |
 
 Downloads are never served via a raw `MEDIA_URL` static path — `urls.py` has no route mapping `MEDIA_URL` to a static-serving view. `GET /api/attachments/{id}/download/` is the only way to fetch a file's bytes, so every download goes through the same project-membership check as everything else.
+
+The `Attachment` model is shared between work items and comments rather than
+split into two — exactly one of `work_item`/`comment` is set on any given
+attachment (a database `CheckConstraint` enforces this), and `AttachmentSerializer`
+always includes both fields, with whichever one doesn't apply coming back `null`.
+`DELETE` and `download` are unchanged for comment attachments — both resolve the
+owning project generically through `Attachment.project`, which already branches
+on whichever FK is set.
 
 ## Invitations
 | Method | Path | Notes |

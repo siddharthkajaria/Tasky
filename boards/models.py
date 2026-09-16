@@ -399,7 +399,16 @@ class Comment(models.Model):
 
 
 class Attachment(models.Model):
-    work_item = models.ForeignKey(WorkItem, on_delete=models.CASCADE, related_name="attachments")
+    # Reused for both work items and comments rather than splitting into two
+    # models — exactly one of the two FKs is set, enforced below by
+    # `attachment_exactly_one_parent` so a row can never be orphaned from
+    # both, or claimed by both at once.
+    work_item = models.ForeignKey(
+        WorkItem, on_delete=models.CASCADE, null=True, blank=True, related_name="attachments"
+    )
+    comment = models.ForeignKey(
+        Comment, on_delete=models.CASCADE, null=True, blank=True, related_name="attachments"
+    )
     file = models.FileField(upload_to="attachments/")
     filename = models.CharField(max_length=255)
     content_type = models.CharField(max_length=100, blank=True)
@@ -414,13 +423,22 @@ class Attachment(models.Model):
 
     class Meta:
         ordering = ["uploaded_at", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(work_item__isnull=False, comment__isnull=True)
+                    | models.Q(work_item__isnull=True, comment__isnull=False)
+                ),
+                name="attachment_exactly_one_parent",
+            ),
+        ]
 
     def __str__(self) -> str:
-        return f"{self.filename} on {self.work_item}"
+        return f"{self.filename} on {self.work_item or self.comment}"
 
     @property
     def project(self):
-        return self.work_item.board.project
+        return self.work_item.board.project if self.work_item_id else self.comment.card.board.project
 
 
 class AutomationRule(models.Model):
