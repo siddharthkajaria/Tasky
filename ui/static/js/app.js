@@ -452,6 +452,7 @@ function fieldRow(field, list, canManage) {
   const deleteBtn = li.querySelector('[data-delete]');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete the "${field.name}" field? It comes off every screen and work item using it.`)) return;
       try {
         await data.deleteField(field.id);
         toast(`"${field.name}" deleted`);
@@ -463,9 +464,8 @@ function fieldRow(field, list, canManage) {
   return li;
 }
 
-/* Field options — an ordered list, edited in place. Reordering swaps an
-   adjacent pair's `position` via two sequential PATCH calls, same pattern
-   as Phase 1's status reorder. */
+/* Field options — an ordered list, edited in place. Reordering is a single
+   PATCH per move; the server renumbers the siblings (see below). */
 async function openFieldOptionsModal(fieldId, canManage, onChange) {
   let field;
   try { field = await data.getField(fieldId); } catch (err) { return handle(err); }
@@ -536,7 +536,10 @@ async function openFieldOptionsModal(fieldId, canManage, onChange) {
     const down = li.querySelector('[data-down]');
     if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i + 1 })));
     const remove = li.querySelector('[data-remove]');
-    if (remove) remove.addEventListener('click', () => run(() => data.deleteFieldOption(field.id, option.id)));
+    if (remove) remove.addEventListener('click', () => {
+      if (!confirm(`Remove the "${option.label}" option?`)) return;
+      run(() => data.deleteFieldOption(field.id, option.id));
+    });
 
     const labelEl = li.querySelector('[data-rename]');
     if (labelEl) {
