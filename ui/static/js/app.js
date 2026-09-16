@@ -1610,14 +1610,19 @@ async function loadAttachments(item, modal, myRoleHere) {
       list.innerHTML = '<li class="empty-inline">No attachments yet.</li>';
       return;
     }
-    list.replaceChildren(...rows.map(a => attachmentRow(a, item, modal, myRoleHere)));
+    list.replaceChildren(...rows.map(a => attachmentRow(a, () => loadAttachments(item, modal, myRoleHere), myRoleHere)));
   } catch (err) {
     list.innerHTML = '';
     errorState(list, err, () => loadAttachments(item, modal, myRoleHere));
   }
 }
 
-function attachmentRow(a, item, modal, myRoleHere) {
+// Shared between work-item attachments and comment attachments — the two
+// lists differ only in where they're fetched from (`data.listAttachments`
+// vs `data.listCommentAttachments`), never in how a row looks or how delete
+// permission is decided, so this renderer takes a `reload` callback instead
+// of an `item`/`modal` pair and knows nothing about which parent it's on.
+function attachmentRow(a, reload, myRoleHere) {
   const li = document.createElement('li');
   li.className = 'attachment-row';
   // AttachmentSerializer nests the uploader under `uploaded_by` (a full
@@ -1643,11 +1648,28 @@ function attachmentRow(a, item, modal, myRoleHere) {
       try {
         await data.deleteAttachment(a.id);
         toast('Attachment deleted');
-        loadAttachments(item, modal, myRoleHere);
+        reload();
       } catch (err) { handle(err); }
     });
   }
   return li;
+}
+
+async function loadCommentAttachments(commentId, container, myRoleHere) {
+  if (!container) return;
+  try {
+    const rows = await data.listCommentAttachments(commentId);
+    if (!rows.length) {
+      container.innerHTML = '<li class="empty-inline">No attachments yet.</li>';
+      return;
+    }
+    container.replaceChildren(
+      ...rows.map(a => attachmentRow(a, () => loadCommentAttachments(commentId, container, myRoleHere), myRoleHere))
+    );
+  } catch (err) {
+    container.innerHTML = '';
+    errorState(container, err, () => loadCommentAttachments(commentId, container, myRoleHere));
+  }
 }
 
 /* Search (sub-project 5) --------------------------------------------------- */
@@ -2950,6 +2972,7 @@ async function openWorkItemModal(itemId) {
       `<ul class="comment-list" data-comments><li class="loading">Loading…</li></ul>` +
       `<form class="comment-form" data-comment-form>` +
         `<input name="body" placeholder="Add a comment" aria-label="Comment">` +
+        `<input type="file" data-comment-file aria-label="Attach a file to this comment (optional)">` +
         `<button class="btn" type="submit">Post</button>` +
       `</form>` +
     `</div>` +
@@ -3038,29 +3061,42 @@ async function openWorkItemModal(itemId) {
     } catch (err) { handle(err); }
   });
 
+  // Delete permission is per-attachment (uploader OR Owner/Admin), not a
+  // single section-wide flag — needs "my role on this item's project",
+  // which `members` (already fetched for the custom-field user_picker,
+  // Task 5.6) already carries with no second network call. Computed early
+  // since both the comment thread (each comment's own attachments) and the
+  // work item's attachment list below need it.
+  const myMembership = members.find(m => m.user_detail && m.user_detail.id === me.id);
+  const myRoleHere = myMembership ? myMembership.role : null;
+
   if (canHaveChildren) loadChildren(item, ctx);
   loadLinks(item, ctx);
-  loadComments(item.id, modal);
+  loadComments(item.id, modal, myRoleHere);
 
   modal.querySelector('[data-add-link]').addEventListener('click', () => openLinkModal(item, ctx));
 
   modal.querySelector('[data-comment-form]').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = e.target.querySelector('[name=body]');
+    const fileInput = e.target.querySelector('[data-comment-file]');
     if (!input.value.trim()) return;
     try {
-      await data.createComment(item.id, input.value);
+      const posted = await data.createComment(item.id, input.value);
       input.value = '';
-      loadComments(item.id, modal);
+      const file = fileInput.files[0];
+      fileInput.value = '';
+      if (file) {
+        try {
+          await data.uploadCommentAttachment(posted.id, file);
+        } catch (err) {
+          if (err && err.sessionExpired) { close(); return handle(err); }
+          toast('Comment posted, but the attachment failed to upload');
+        }
+      }
+      loadComments(item.id, modal, myRoleHere);
     } catch (err) { handle(err); }
   });
-
-  // Delete permission is per-attachment (uploader OR Owner/Admin), not a
-  // single section-wide flag — needs "my role on this item's project",
-  // which `members` (already fetched for the custom-field user_picker,
-  // Task 5.6) already carries with no second network call.
-  const myMembership = members.find(m => m.user_detail && m.user_detail.id === me.id);
-  const myRoleHere = myMembership ? myMembership.role : null;
 
   loadAttachments(item, modal, myRoleHere);
 
@@ -3208,7 +3244,7 @@ async function openLinkModal(item, ctx) {
 
 /* Comments -------------------------------------------------------------- */
 
-async function loadComments(itemId, modal) {
+async function loadComments(itemId, modal, myRoleHere) {
   const list = modal.querySelector('[data-comments]');
   if (!list) return;
   try {
@@ -3217,14 +3253,14 @@ async function loadComments(itemId, modal) {
       list.innerHTML = '<li class="empty-inline">No comments yet. Explain the tricky part here.</li>';
       return;
     }
-    list.replaceChildren(...comments.map(c => commentEl(c, itemId, modal)));
+    list.replaceChildren(...comments.map(c => commentEl(c, itemId, modal, myRoleHere)));
   } catch (err) {
     list.innerHTML = '';
-    errorState(list, err, () => loadComments(itemId, modal));
+    errorState(list, err, () => loadComments(itemId, modal, myRoleHere));
   }
 }
 
-function commentEl(comment, itemId, modal) {
+function commentEl(comment, itemId, modal, myRoleHere) {
   const li = document.createElement('li');
   li.className = 'comment';
   const author = comment.author
@@ -3240,13 +3276,31 @@ function commentEl(comment, itemId, modal) {
       `<time datetime="${esc(comment.created_at)}">${esc(String(comment.created_at).slice(0, 10))}</time>` +
       (mine ? `<button class="btn btn-danger" type="button" data-del>Delete</button>` : '') +
     `</div>` +
-    `<p class="comment-body">${esc(comment.body)}</p>`;
+    `<p class="comment-body">${esc(comment.body)}</p>` +
+    `<ul class="attachment-list" data-comment-attachments><li class="loading">Loading…</li></ul>` +
+    `<button class="btn btn-quiet" type="button" data-attach-comment>+ Attach</button>` +
+    `<input type="file" data-comment-attach-file hidden>`;
 
   const del = li.querySelector('[data-del]');
   if (del) del.addEventListener('click', async () => {
     try {
       await data.deleteComment(comment.id);
-      loadComments(itemId, modal);
+      loadComments(itemId, modal, myRoleHere);
+    } catch (err) { handle(err); }
+  });
+
+  loadCommentAttachments(comment.id, li.querySelector('[data-comment-attachments]'), myRoleHere);
+
+  const attachFileInput = li.querySelector('[data-comment-attach-file]');
+  li.querySelector('[data-attach-comment]').addEventListener('click', () => attachFileInput.click());
+  attachFileInput.addEventListener('change', async () => {
+    const file = attachFileInput.files[0];
+    attachFileInput.value = '';
+    if (!file) return;
+    try {
+      await data.uploadCommentAttachment(comment.id, file);
+      toast('Uploaded');
+      loadCommentAttachments(comment.id, li.querySelector('[data-comment-attachments]'), myRoleHere);
     } catch (err) { handle(err); }
   });
 

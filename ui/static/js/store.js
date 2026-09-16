@@ -154,8 +154,13 @@ const Store = (() => {
   // other relations here it has no `_detail` suffix, matching Comment's
   // `author`. Must stay `uploaded_by`, not `uploaded_by_detail`, so this
   // mock's shape matches the real API's.
+  //
+  // `work_item` and `comment` are mutually exclusive on the real model
+  // (exactly one is ever set), so both are always present here — whichever
+  // one doesn't apply comes back `null`, matching AttachmentSerializer.
   const attachmentOut = (a) => ({
-    id: a.id, work_item: a.work_item, filename: a.filename, size: a.size,
+    id: a.id, work_item: a.work_item ?? null, comment: a.comment ?? null,
+    filename: a.filename, size: a.size,
     uploaded_by: a.uploaded_by ? userById(a.uploaded_by) : null,
     uploaded_at: a.uploaded_at,
   });
@@ -1504,13 +1509,25 @@ const Store = (() => {
     return wait(attachmentOut(attachment));
   }
 
+  // Resolves the owning project regardless of which parent FK is set —
+  // mirrors the real `Attachment.project` property, which branches the same
+  // way between `work_item.board.project` and `comment.card.board.project`.
+  function attachmentProject(attachment) {
+    if (attachment.work_item != null) {
+      const item = itemById(attachment.work_item);
+      return item ? boardProject(item.board) : null;
+    }
+    const comment = comments.find(c => c.id === attachment.comment);
+    return comment ? commentProject(comment) : null;
+  }
+
   function deleteAttachment(attachmentId) {
     const attachment = attachmentById(attachmentId);
     if (!attachment) return fail(404, { detail: 'Not found.' });
-    const item = itemById(attachment.work_item);
-    const role = myRole(boardProject(item.board));
+    const projectId = attachmentProject(attachment);
+    const role = myRole(projectId);
     if (!role) return denied();
-    if (projectById(boardProject(item.board)).is_archived) {
+    if (projectById(projectId).is_archived) {
       return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
     }
     if (!Logic.canDeleteAttachment(attachment.uploaded_by, me.id, role)) {
@@ -1526,6 +1543,40 @@ const Store = (() => {
   function downloadUrl(attachmentId) {
     const attachment = attachmentById(attachmentId);
     return attachment ? URL.createObjectURL(attachment.blob) : '#';
+  }
+
+  /* Comment attachments — same rules as work-item attachments above, just
+     scoped to a comment id instead of a work item id, and stored in the
+     same `attachments` array (a comment attachment carries `comment`
+     instead of `work_item`, exactly like the real, shared Attachment model). */
+
+  function commentProject(comment) {
+    const item = itemById(comment.card);
+    return item ? boardProject(item.board) : null;
+  }
+
+  function listCommentAttachments(commentId) {
+    const comment = comments.find(c => c.id === Number(commentId));
+    if (!comment) return fail(404, { detail: 'Not found.' });
+    if (!myRole(commentProject(comment))) return denied();
+    return wait(attachments.filter(a => a.comment === comment.id).map(attachmentOut));
+  }
+
+  function uploadCommentAttachment(commentId, file) {
+    const comment = comments.find(c => c.id === Number(commentId));
+    if (!comment) return fail(404, { detail: 'Not found.' });
+    if (!myRole(commentProject(comment))) return denied();
+    if (projectById(commentProject(comment)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+    if (!file) return fail(400, { file: 'This field is required.' });
+    if (file.size > MAX_ATTACHMENT_SIZE) return fail(400, { file: 'File exceeds the 25 MB limit.' });
+    const attachment = {
+      id: ++nextAttachmentId, comment: comment.id, filename: file.name, size: file.size,
+      uploaded_by: me.id, uploaded_at: now(), blob: file,
+    };
+    attachments.push(attachment);
+    return wait(attachmentOut(attachment));
   }
 
   /* ---- search --------------------------------------------------------------
@@ -2164,6 +2215,7 @@ const Store = (() => {
     listScreenAssignments, setScreenAssignments, getScreenForItemType,
     listReleases, createRelease, updateRelease, deleteRelease, listReleaseWorkItems,
     listAttachments, uploadAttachment, deleteAttachment, downloadUrl,
+    listCommentAttachments, uploadCommentAttachment,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
     search,

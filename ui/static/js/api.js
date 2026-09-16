@@ -202,6 +202,30 @@ const Api = (() => {
     deleteAttachment: (id) => request(`/api/attachments/${id}/`, { method: 'DELETE' }),
     downloadUrl: (id) => `/api/attachments/${id}/download/`,
 
+    /* Comment attachments — same shape as work-item attachments above,
+       just scoped to a comment id instead of a work item id. */
+    listCommentAttachments: (commentId) => request(`/api/comments/${commentId}/attachments/`),
+    uploadCommentAttachment: async (commentId, file) => {
+      const form = new FormData();
+      form.append('file', file);
+      const token = getCookie('csrftoken');
+      const res = await fetch(`/api/comments/${commentId}/attachments/`, {
+        method: 'POST',
+        headers: token ? { 'X-CSRFToken': token } : {},
+        credentials: 'same-origin',
+        body: form,
+      });
+      if (res.ok) return parseBody(res);
+      const data = await parseBody(res);
+      if (res.status === 403) {
+        const me = await fetch('/api/auth/me/', { credentials: 'same-origin' });
+        const err = Object.assign(new Error('Forbidden'), { status: 403, data });
+        err.sessionExpired = (me.status === 403);
+        throw err;
+      }
+      throw Object.assign(new Error('API ' + res.status), { status: res.status, data });
+    },
+
     /* Search --------------------------------------------------------------- */
     search: (params) => {
       const qs = new URLSearchParams();
