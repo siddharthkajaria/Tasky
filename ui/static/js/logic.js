@@ -30,8 +30,8 @@ const Logic = (() => {
      the exact one the server will assign, since the chip re-reads the
      server's `labels_detail` on the next load either way. */
   const LABEL_PALETTE = [
-    '#E4362C', '#D97C1F', '#C9A227', '#4E9A51',
-    '#2E8B8B', '#3B6FB6', '#7C5CBF', '#B23D82',
+    '#6E4FA3', '#2E7D5B', '#3B3F8F', '#A32218',
+    '#B8860B', '#1F7A8C', '#C2447A', '#5B7B29',
   ];
   function colorForLabelName(name) {
     let hash = 0;

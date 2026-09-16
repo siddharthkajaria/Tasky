@@ -235,7 +235,7 @@ Any project member can apply an existing release to a work item via `PATCH /api/
 
 **There is no `POST /api/labels/`.** Labels are created only implicitly, by naming a new label string in a work item write (see `labels` on `/api/work-items/` above). There is no separate endpoint for inventing one ahead of time.
 
-Labels are global, not scoped to a project — the same `Label` row is shared and reused by every project. `name` is unique (case-insensitive); `color` must be one of the 8 hex colors in the fixed palette. `PATCH` re-validates both the same way: a duplicate `name` (case-insensitive, excluding this row) or a `color` outside the palette is rejected with `400`.
+Labels are global, not scoped to a project — the same `Label` row is shared and reused by every project. `name` is unique (case-insensitive); `color` must be one of the 8 hex colors in the fixed palette: `#6E4FA3`, `#2E7D5B`, `#3B3F8F`, `#A32218`, `#B8860B`, `#1F7A8C`, `#C2447A`, `#5B7B29` (see `LABEL_PALETTE` in `boards/services.py`). `PATCH` re-validates both the same way: a duplicate `name` (case-insensitive, excluding this row) or a `color` outside the palette is rejected with `400`.
 
 **Governance is split, deliberately, from ordinary label use:** any project member can apply an existing label or invent a brand-new one on a work item (see `labels` on `/api/work-items/` above) — that needs only ordinary work-item edit permission. Renaming, recoloring, or deleting the `Label` row itself is a wider-blast-radius action (it affects every work item using that label, across every project) and is gated separately: the caller must be an Owner of *some* project, not necessarily one connected to the label. A non-Owner gets `403`.
 

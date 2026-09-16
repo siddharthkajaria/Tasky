@@ -2115,7 +2115,7 @@ const Store = (() => {
     if (!label) return fail(404, { detail: 'Not found.' });
     if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have access to this project." });
     if (!Logic.LABEL_PALETTE.includes(color)) {
-      return fail(400, { color: `"${color}" is not one of the available colors.` });
+      return fail(400, { color: 'Pick a color from the palette.' });
     }
     label.color = color;
     return wait(label);
