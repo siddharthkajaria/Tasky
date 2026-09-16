@@ -160,6 +160,16 @@ const Store = (() => {
     uploaded_at: a.uploaded_at,
   });
 
+  let sprints = [];
+  let nextSprintId = 11000;
+  const sprintById = (sid) => sprints.find(s => s.id === Number(sid)) || null;
+  const sprintOut = (s) => Object.assign({}, s, { created_by: userById(s.created_by) });
+  // docs/api.md: work item responses carry `sprint_detail`, a nested
+  // `{id, name, state, start_date, end_date}` — deliberately narrower than
+  // sprintOut (no `board`/`goal`/`created_by`/`created_at`), so this stays a
+  // separate helper rather than reusing sprintOut.
+  const sprintDetailOut = (s) => s && { id: s.id, name: s.name, state: s.state, start_date: s.start_date, end_date: s.end_date };
+
   const fieldOut = (f) => Object.assign({}, f, {
     options: optionsForField(f.id),
     created_by: userById(f.created_by),
@@ -226,7 +236,8 @@ const Store = (() => {
   function seed(o) {
     const item = Object.assign({
       description: '', status: P1_TODO, priority: 2, due_date: null, assignee: null,
-      parent: null, position: 0, components: [], labels: [], custom_fields: {}, release: null, created_by: 1,
+      parent: null, position: 0, components: [], labels: [], custom_fields: {}, release: null,
+      sprint: null, backlog_position: 0, created_by: 1,
       created_at: now(), updated_at: now(),
     }, o);
     workItems.push(item);
@@ -351,6 +362,7 @@ const Store = (() => {
       status_detail: statusById(w.status),
       custom_fields: w.custom_fields || {},
       release_detail: w.release ? releaseOut(releaseById(w.release)) : null,
+      sprint_detail: w.sprint ? sprintDetailOut(sprintById(w.sprint)) : null,
     });
   }
 
@@ -1770,6 +1782,162 @@ const Store = (() => {
     return { imported, failed };
   }
 
+  /* ---- sprints & backlog ----------------------------------------------------- */
+
+  function renumberBacklogBucket(boardId, sprintId) {
+    workItems
+      .filter(w => w.board === boardId && w.sprint === sprintId)
+      .sort((a, b) => a.backlog_position - b.backlog_position || a.id - b.id)
+      .forEach((w, i) => { w.backlog_position = i; });
+  }
+
+  function listSprints(boardId) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    if (!myRole(board.project)) return denied();
+    return wait(sprints.filter(s => s.board === board.id).map(sprintOut));
+  }
+
+  function createSprint(boardId, fields) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    const role = myRole(board.project);
+    if (!role) return denied();
+    if (projectById(board.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
+    const sprint = {
+      id: ++nextSprintId, board: board.id, name: fields.name || '', goal: fields.goal || '',
+      state: 'planned', start_date: null, end_date: null, created_by: me.id, created_at: now(),
+    };
+    sprints.push(sprint);
+    return wait(sprintOut(sprint));
+  }
+
+  function getSprint(sprintId) {
+    const sprint = sprintById(sprintId);
+    if (!sprint) return fail(404, { detail: 'Not found.' });
+    if (!myRole(boardProject(sprint.board))) return denied();
+    return wait(sprintOut(sprint));
+  }
+
+  function updateSprint(sprintId, fields) {
+    const sprint = sprintById(sprintId);
+    if (!sprint) return fail(404, { detail: 'Not found.' });
+    const role = myRole(boardProject(sprint.board));
+    if (!role) return denied();
+    if (projectById(boardProject(sprint.board)).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
+    if ('name' in fields) sprint.name = fields.name;
+    if ('goal' in fields) sprint.goal = fields.goal;
+    return wait(sprintOut(sprint));
+  }
+
+  function deleteSprint(sprintId) {
+    const sprint = sprintById(sprintId);
+    if (!sprint) return fail(404, { detail: 'Not found.' });
+    const role = myRole(boardProject(sprint.board));
+    if (!role) return denied();
+    if (projectById(boardProject(sprint.board)).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
+    if (sprint.state !== 'planned') return fail(400, { detail: 'Only a planned sprint can be deleted.' });
+    const stillScheduled = workItems.filter(w => w.sprint === sprint.id).length;
+    if (stillScheduled) {
+      return fail(400, { detail: `Still has ${stillScheduled} work item${stillScheduled === 1 ? '' : 's'} scheduled into it. Move ${stillScheduled === 1 ? 'it' : 'them'} first.` });
+    }
+    sprints = sprints.filter(s => s.id !== sprint.id);
+    return wait(null);
+  }
+
+  function startSprint(sprintId) {
+    const sprint = sprintById(sprintId);
+    if (!sprint) return fail(404, { detail: 'Not found.' });
+    const role = myRole(boardProject(sprint.board));
+    if (!role) return denied();
+    if (projectById(boardProject(sprint.board)).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
+    if (sprint.state !== 'planned') return fail(400, { detail: 'Only a planned sprint can be started.' });
+    const active = sprints.find(s => s.board === sprint.board && s.state === 'active' && s.id !== sprint.id);
+    if (active) return fail(400, { detail: `"${active.name}" is already active on this board. Complete it first.` });
+    sprint.state = 'active';
+    sprint.start_date = Logic.today();
+    return wait(sprintOut(sprint));
+  }
+
+  function completeSprint(sprintId) {
+    const sprint = sprintById(sprintId);
+    if (!sprint) return fail(404, { detail: 'Not found.' });
+    const role = myRole(boardProject(sprint.board));
+    if (!role) return denied();
+    if (projectById(boardProject(sprint.board)).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
+    if (sprint.state !== 'active') return fail(400, { detail: 'Only an active sprint can be completed.' });
+    sprint.state = 'completed';
+    sprint.end_date = Logic.today();
+    // Every work item still scheduled into this sprint returns to the backlog,
+    // appended after whatever is already there — nextPos is captured from the
+    // backlog's current size BEFORE any straggler moves in, so stragglers land
+    // after existing backlog items instead of colliding with their positions.
+    const stragglers = workItems
+      .filter(w => w.sprint === sprint.id)
+      .sort((a, b) => a.backlog_position - b.backlog_position || a.id - b.id);
+    let nextPos = workItems.filter(w => w.board === sprint.board && w.sprint === null).length;
+    stragglers.forEach(w => { w.sprint = null; w.backlog_position = nextPos++; w.updated_at = now(); });
+    return wait(sprintOut(sprint));
+  }
+
+  function listSprintWorkItems(sprintId) {
+    const sprint = sprintById(sprintId);
+    if (!sprint) return fail(404, { detail: 'Not found.' });
+    if (!myRole(boardProject(sprint.board))) return denied();
+    return wait(
+      workItems.filter(w => w.sprint === sprint.id)
+               .sort((a, b) => a.backlog_position - b.backlog_position || a.id - b.id)
+               .map(itemOut)
+    );
+  }
+
+  function listBacklog(boardId) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    if (!myRole(board.project)) return denied();
+    return wait(
+      workItems.filter(w => w.board === board.id && w.sprint === null)
+               .sort((a, b) => a.backlog_position - b.backlog_position || a.id - b.id)
+               .map(itemOut)
+    );
+  }
+
+  function scheduleWorkItem(itemId, payload) {
+    const item = itemById(itemId);
+    if (!item) return fail(404, { detail: 'Not found.' });
+    if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+    let sprintId = null;
+    if (payload.sprint !== null && payload.sprint !== undefined) {
+      const sprint = sprintById(payload.sprint);
+      if (!sprint || sprint.board !== item.board) return fail(400, { sprint: "Sprint must belong to this item's board." });
+      if (sprint.state === 'completed') return fail(400, { sprint: "Can't schedule into a completed sprint." });
+      sprintId = sprint.id;
+    }
+    const position = payload.position !== undefined
+      ? Number(payload.position)
+      : workItems.filter(w => w.board === item.board && w.sprint === sprintId && w.id !== item.id).length;
+
+    const fromSprint = item.sprint;
+    item.sprint = sprintId;
+    // The 0.5 offset places the item strictly between its two neighbors at
+    // the requested position without first renumbering anything, so a single
+    // renumberBacklogBucket pass afterward produces a clean 0..n-1 order with
+    // the item exactly where it was asked to go.
+    item.backlog_position = position - 0.5;
+    renumberBacklogBucket(item.board, sprintId);
+    if (fromSprint !== sprintId) renumberBacklogBucket(item.board, fromSprint);
+    item.updated_at = now();
+    return wait(itemOut(item));
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1857,5 +2025,7 @@ const Store = (() => {
     listUsers, myTasks,
     search,
     bulkMoveWorkItems, bulkUpdateWorkItems, bulkDeleteWorkItems, importWorkItems,
+    listSprints, createSprint, getSprint, updateSprint, deleteSprint,
+    startSprint, completeSprint, listSprintWorkItems, listBacklog, scheduleWorkItem,
   };
 })();

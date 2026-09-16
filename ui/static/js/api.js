@@ -233,5 +233,17 @@ const Api = (() => {
       }
       throw Object.assign(new Error('API ' + res.status), { status: res.status, data });
     },
+
+    /* Sprints & Backlog ------------------------------------------------------ */
+    listSprints:  (boardId)      => request(`/api/boards/${boardId}/sprints/`),
+    createSprint: (boardId, fields) => request(`/api/boards/${boardId}/sprints/`, { method: 'POST', body: fields }),
+    getSprint:    (id)           => request(`/api/sprints/${id}/`),
+    updateSprint: (id, fields)   => request(`/api/sprints/${id}/`, { method: 'PATCH', body: fields }),
+    deleteSprint: (id)           => request(`/api/sprints/${id}/`, { method: 'DELETE' }),
+    startSprint:    (id) => request(`/api/sprints/${id}/start/`,    { method: 'POST' }),
+    completeSprint: (id) => request(`/api/sprints/${id}/complete/`, { method: 'POST' }),
+    listSprintWorkItems: (id) => request(`/api/sprints/${id}/work-items/`),
+    listBacklog: (boardId) => request(`/api/boards/${boardId}/backlog/`),
+    scheduleWorkItem: (itemId, payload) => request(`/api/work-items/${itemId}/schedule/`, { method: 'POST', body: payload }),
   };
 })();
