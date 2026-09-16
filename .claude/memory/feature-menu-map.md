@@ -1,12 +1,17 @@
 # Tasky — screen and route map
 
-Two front ends exist and they are **not** at parity:
+Two front ends exist and they are now **close to parity**:
 
-- **`ui/`** — the production SPA Django serves. 6 screens. **This is what users get.**
+- **`ui/`** — the production SPA Django serves. 10 of `design/`'s 11 screens,
+  after the Wave 1 UI-wiring branch closed most of the gap. **This is what
+  users get.**
 - **`design/`** — the signed-off vanilla-JS prototype. 11 screens. Opened as a
-  file, no server. This is the *target*, and the backend already supports all of it.
+  file, no server. The one screen still missing from `ui/` — the Site Admin
+  user-management panel (`#/admin`, part of sub-project 9) — remains
+  prototype-only here; everything else the backend supports is now reachable
+  from `ui/`.
 
-Verified 2026-09-07 against `ui/static/js/app.js`, `ui/static/js/api.js` and
+Verified 2026-09-16 against `ui/static/js/app.js`, `ui/static/js/api.js` and
 `design/js/app.js`. Both are hash-routed SPAs; Django's catch-all in
 `config/urls.py` renders `ui/index.html` for any non-`/api/`, non-`/admin/`,
 non-`/static/` path.
@@ -50,6 +55,45 @@ Resolves the board, rewrites the hash to the canonical `#/projects/:pid/boards/:
 - **Actions:** click through to the item's board
 - **Access:** authenticated; scoped to yourself
 
+### `#/labels` — Labels admin
+- **Data:** every global `Label` — name, color swatch
+- **Actions:** rename, recolor (cycles the 8-color hashed palette), delete (unassigns everywhere, no in-use guard)
+- **Access:** Owner of any project, or Site Admin
+
+### `#/fields` — Custom fields
+- **Data:** every global `Field` (7 types) and its options
+- **Actions:** create field, add/edit/delete options, delete field. Type is immutable after create; delete is blocked while the field is on a screen
+- **Access:** Owner of any project, or Site Admin
+
+### `#/screens` — Screens
+- **Data:** every global `Screen` and its assigned fields
+- **Actions:** create screen, add/remove/reorder fields, toggle required, delete (blocked while assigned)
+- **Access:** Owner of any project, or Site Admin
+
+### `#/search` — Cross-project search
+- **Data:** work items matching a text term (2 char min) plus type/priority/project facets
+- **Actions:** search, click through to the item's board
+- **Access:** any member; the project pool is scoped to your own memberships before any facet is applied
+
+### `#/projects/:pid/boards/:bid/backlog` — Backlog & sprints
+- **Data:** the board's backlog plus every sprint (Planned/Active/Completed) and its items
+- **Actions:** create sprint, start (one active per board), complete (items return to backlog), delete (planned only), move items between sprints and backlog
+- **Access:** list and "move to" open to any member; start/complete/delete/create are Owner/Admin
+
+### Also shipped, embedded in existing screens
+
+| Feature | Where | Notes |
+|---|---|---|
+| **Statuses (Workflows)** | Project detail section | rename, reorder, recategorize, add, delete. Owner/Admin |
+| **Releases** | Project detail section | create, rename, status (Unreleased/Released/Archived), target date, delete. Project-scoped; name unique per project. Tag a work item with a release from its detail modal (any member) |
+| **Automation** | Project detail section | rules in plain English. Triggers: work item created, status changed. Actions: apply label, assign, clear assignee, change status. Members see the list; Owner/Admin manage |
+| **Attachments** | Work item detail modal | upload, download, delete. Delete = uploader **or** project Owner/Admin (wider than comments, which are author-only) |
+| **Custom field values** | Work item create form + detail modal | rendered from the screen assigned to that item type. Orphaned values stay visible read-only under "Other saved values" |
+| **Bulk operations** | Board "Select" mode | multi-select then bulk move / assign / set priority / add label / add component / delete |
+| **CSV import** | Board "Import" button | `title` required; optional `item_type`, `status`, `priority`, `assignee`, `labels`, `components`. Per-row success — a bad row is reported and skipped |
+| **Project templates** | Create project form | Blank / Software Project / Bug Tracking. Seeds statuses and starter components. Not recorded on the project afterward |
+| **Project archiving** | Project detail | Owner-only. A real write-block, not just visibility: an archived project's boards/work items/comments/etc. reject every write with `403`, reads stay open, and the project is hidden from the list unless "Show archived" |
+
 ### Login
 Username + password, session cookie. Failure message is identical for unknown
 username and wrong password, deliberately — a different message would let anyone
@@ -62,31 +106,14 @@ Full model admin. **This is how teammates are created today** (`ui/` has no admi
 
 ## Prototype only in `design/` — backend shipped, production UI NOT built
 
-Every row below has working API endpoints and passing tests. The gap is
-purely `ui/`.
+One screen remains: everything else sub-projects 1–11 cover shipped into
+`ui/` via the Wave 1 UI-wiring branch.
 
 | Route | Screen | Actions | Access |
 |---|---|---|---|
-| `#/fields` | Custom fields | create field (7 types), add/edit/delete options, delete field. Type is immutable after create; delete blocked while on a screen | Owner of any project, or Site Admin |
-| `#/screens` | Screens | create screen, add/remove/reorder fields, toggle required, delete (blocked while assigned) | Owner of any project, or Site Admin |
-| `#/labels` | Labels | rename, recolor (cycles a hashed palette), delete (unassigns everywhere, no in-use guard) | Owner of any project, or Site Admin |
-| `#/search` | Cross-project search | text term (2 char min) + type/priority/project facets; rejects an empty query | Any member; project list is your memberships only |
-| `#/admin` | Site admin | create account, activate/deactivate, grant/revoke Site Admin. Self-lockout guarded; last Site Admin cannot be revoked | Site Admin only — no partial view for others |
-| `#/projects/:pid/boards/:bid/backlog` | Backlog & sprints | create sprint, start (one active per board), complete (items return to backlog), delete (planned only), move items between sprints and backlog | List and "move to" open to any member; start/complete/delete/create are Owner/Admin |
+| `#/admin` | Site admin (sub-project 9) | create account, activate/deactivate, grant/revoke Site Admin. Self-lockout guarded; last Site Admin cannot be revoked | Site Admin only — no partial view for others |
 
-Also prototype-only, embedded in existing screens:
-
-| Feature | Where | Notes |
-|---|---|---|
-| **Statuses (Workflows)** | Project detail section | rename, reorder, recategorize, add, delete. `ui/` reads statuses but offers no management UI |
-| **Releases** | Project detail section | create, rename, status (Unreleased/Released/Archived), target date, delete. Project-scoped; name unique per project. Tag a work item with a release from its detail modal (any member) |
-| **Automation** | Project detail section | rules in plain English. Triggers: work item created, status changed. Actions: apply label, assign, clear assignee, change status. Members see the list; Owner/Admin manage |
-| **Attachments** | Work item detail modal | upload, download, delete. Delete = uploader **or** project Owner/Admin (wider than comments, which are author-only) |
-| **Custom field values** | Work item create form + detail modal | rendered from the screen assigned to that item type. Orphaned values stay visible read-only under "Other saved values" |
-| **Bulk operations** | Board "Select" mode | multi-select then bulk move / assign / set priority / add label / add component / delete |
-| **CSV import** | Board "Import" button | `title` required; optional `item_type`, `status`, `priority`, `assignee`, `labels`, `components`. Per-row success — a bad row is reported and skipped |
-| **Project templates** | Create project form | Blank / Software Project / Bug Tracking. Seeds statuses and starter components. Not recorded on the project afterward |
-| **Project archiving** | Project detail | Owner-only. Visibility-only today — archived projects stay fully editable. Hidden from the list unless "Show archived" |
+Teammates are still created via Django admin (`/admin/`) instead, as noted above.
 
 ---
 

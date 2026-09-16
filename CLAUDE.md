@@ -29,9 +29,13 @@ Memory files: `feature-menu-map.md` (every screen and route),
 **Design signed off: 2026-08-05.** Phase 2 is unlocked, and sub-projects 1–11
 have shipped backends. Sign-off is **per sub-project**, not once for the project.
 
-The live gap is the **production UI**: `ui/` implements 6 screens, `design/`
-defines 11, and the backend supports all 11. Roughly ten sub-projects' worth of
-tested API surface is not reachable from the app.
+The Wave 1 UI-wiring branch (2026-09) closed almost all of the production-UI
+gap: `ui/` now implements 10 of `design/`'s 11 screens, covering sub-projects
+1–11's backend surface end to end (including a real write-block on archived
+projects, not just the visibility filter it started as). The one screen not
+yet wired up is the Site Admin user-management panel (`#/admin`, part of
+sub-project 9) — see `ui/README.md`. Sub-projects 12 (Notifications) and 13
+(Reporting) remain spec-only and behind the design gate below.
 
 ## HARD RULE — design is signed off before development starts
 

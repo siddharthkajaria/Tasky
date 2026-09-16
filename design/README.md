@@ -359,8 +359,9 @@ All state is in memory — refreshing the page resets it to the seed above.
     badge in the list.
 62. **Open the archived Tasky Redesign anyway** (from the "Show archived"
     list) and open one of its boards — everything is exactly as editable
-    as before. Archiving is visibility-only here, not a write-block; full
-    enforcement is flagged as a real, separate follow-up in the spec.
+    as before. Archiving is visibility-only here, not a write-block, matching
+    this prototype's own (unchanged) mock — the real backend and `ui/` have
+    since shipped the write-block that was flagged as a follow-up in the spec.
     **Unarchive it** from the project page to put it back.
 63. **Sign in as `lena`** (a plain Member of Tasky Redesign, not Owner) and
     open that project — there's no Archive project button. Archiving is

@@ -94,7 +94,7 @@ children rather than cascading. `item_type` and `key` are immutable after creati
   automation rule references it. The error names what is in the way.
 - Column colour follows the **category**, not the name.
 
-## Flow 5 — Sprints *(prototype only)*
+## Flow 5 — Sprints
 
 `PLANNED` → `ACTIVE` → `COMPLETED`
 
@@ -106,7 +106,7 @@ children rather than cascading. `item_type` and `key` are immutable after creati
 4. Complete it — its items return to the backlog.
 5. Only a `PLANNED` sprint can be deleted.
 
-## Flow 6 — Releases *(prototype only)*
+## Flow 6 — Releases
 
 `Unreleased` → `Released` → `Archived`, **and any jump between them** — no
 transition rules. Date can be set or cleared at any time regardless of status.
@@ -122,7 +122,7 @@ transition rules. Date can be set or cleared at any time regardless of status.
 | | Create | Edit | Delete |
 |---|---|---|---|
 | **Comment** | any member | author only | author only |
-| **Attachment** *(prototype)* | any member | — | uploader **or** project Owner/Admin |
+| **Attachment** | any member | — | uploader **or** project Owner/Admin |
 
 Attachments are stored on local disk (`MEDIA_ROOT`), never served statically.
 `boards.views.AttachmentViewSet.download` is the only path a client can fetch a
@@ -131,7 +131,7 @@ file through, so it enforces the same membership check as everything else.
 Refusing to delete someone else's comment returns **403 — and that is not a
 logout**. See the 403 note below.
 
-## Flow 8 — Custom fields *(prototype only)*
+## Flow 8 — Custom fields
 
 - Fields and Screens are **global and reusable**; only the project-to-screen
   mapping is per-project.
@@ -144,7 +144,7 @@ logout**. See the 403 note below.
 - Deletion guards: a field on a screen, an option in use, and a screen in use
   all refuse deletion until cleared.
 
-## Flow 9 — Labels *(prototype only)*
+## Flow 9 — Labels
 
 - **Global**, not project-scoped — the same "urgent" is one row everywhere.
 - Any member invents a label by typing it on a work item. **There is no create
@@ -153,7 +153,7 @@ logout**. See the 403 note below.
   (`label_color_for`), never chosen manually.
 - Rename, recolor and delete are gated to any project Owner, or a Site Admin.
 
-## Flow 10 — Automation *(prototype only)*
+## Flow 10 — Automation
 
 | Trigger | Filter |
 |---|---|

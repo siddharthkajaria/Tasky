@@ -73,12 +73,15 @@ overridden on review.
   blocks login. Nothing here forces an ownership handoff first, unlike voluntarily *leaving* a
   project (which already blocks an Owner until they transfer). An admin deactivating someone
   expecting a clean handoff will not get one automatically.
-- **Project archiving is visibility-only, not a write-block.** An archived project disappears from
-  the default "My Projects" list but stays exactly as editable as before for its existing members —
-  this draft does not make archived projects read-only. Full enforcement would mean touching the
-  write path of every already-shipped feature that writes to a project (boards, work items,
-  comments, statuses, screen assignments, invitations...), which is disproportionate scope for what
-  was asked. If "archived should mean frozen," that's a real, larger follow-up.
+- **Project archiving is a write-block.** *(Updated 2026-09-16 — shipped as part of the Wave 1 UI
+  wiring branch; this bullet originally scoped archiving as visibility-only, deferring the
+  write-block below to a later follow-up. That follow-up has since landed.)* An archived project
+  disappears from the default "My Projects" list, and every write to it or anything that hangs off
+  it (boards, work items, comments, statuses, screen assignments...) is now rejected with
+  `403: {"detail": "This project is archived and read-only. Unarchive it first."}`. Reads stay open,
+  and the project's own management endpoints (`archive`/`unarchive`/`invite`/`transfer-ownership`/
+  `members`/delete) are exempt, so it can always be unarchived. See `docs/api.md`'s Projects section
+  for the exact contract.
 - **No read-only/guest role is added.** Covered under Scope decisions below — flagged here too
   because "Permissions & Admin" as a title might imply this was expected.
 
@@ -230,8 +233,9 @@ manage every global resource; nobody loses anything they had before.
   do the same as before (regression check that the widen didn't accidentally narrow).
 - Project archive/unarchive: Owner-only (Admin and Member get 403); archived projects are excluded
   from `GET /api/projects/` by default and included with `?include_archived=true`; an archived
-  project's boards/work items remain fully readable *and writable* (proves the deliberate
-  visibility-only scope — a regression here would silently expand scope beyond what was decided).
+  project's boards/work items remain fully readable but **reject writes with `403`** *(updated
+  2026-09-16 — see the write-block note above; this test now guards the enforced boundary instead
+  of the deliberate gap it originally proved)*.
 - Double-archive and unarchive-a-non-archived-project both 400 rather than silently no-op'ing.
 
 ## Out of scope (deferred to later sub-projects)
@@ -244,9 +248,11 @@ manage every global resource; nobody loses anything they had before.
 - **Audit trail of role/permission changes.** Belongs with a general activity log, which is already
   flagged as deferred out of Task Detail UX (sub-project 8) — not a bespoke log for this sub-project
   alone.
-- **Read-only enforcement on archived projects.** This draft ships archiving as a visibility/
+- ~~**Read-only enforcement on archived projects.** This draft ships archiving as a visibility/
   declutter feature only. Making an archived project actually immutable touches the write path of
-  every other shipped sub-project and is real, separate scope.
+  every other shipped sub-project and is real, separate scope.~~ **Shipped 2026-09-16** as part of
+  the Wave 1 UI wiring branch — see the write-block note in Judgment calls above and
+  `docs/api.md`'s Projects section.
 - **Bulk ownership transfer / "reassign everything this person owns."** Not requested; the existing
   per-project `transfer-ownership` endpoint already covers the common case.
 - **Self-service password reset / forced password change on first login / email-based invites for

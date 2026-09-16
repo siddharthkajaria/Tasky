@@ -134,20 +134,20 @@ one of them too, so mock mode stays an honest model rather than a picture:
 
 ## Not built *here* — but built on the server
 
-This is the important gap, and it is not the same as "out of scope". The backend
-has shipped sub-projects 1–11 with passing tests, and the signed-off prototype in
-`../design/` covers all of them. **This directory covers 6 screens of 11.**
+The Wave 1 UI-wiring branch closed almost all of this gap: custom fields and
+screens, labels, cross-project search, sprints and backlog, releases,
+attachments, project templates, automation, bulk operations, CSV import, status
+management, and project archiving (a real write-block, not just a visibility
+filter) are all wired up here now, with `static/js/api.js` defining a client
+method for every one of those endpoints.
 
-Reachable only in `../design/`, never in production:
-
-custom fields and screens · labels · cross-project search · sprints and backlog ·
-releases · attachments · site admin · project templates · automation ·
-bulk operations · CSV import · project archiving · status management (this UI
-*reads* per-project statuses but cannot edit them)
-
-`static/js/api.js` is the honest measure — it defines no client method for any of
-those endpoints. Wiring them up is Phase 2 work on an already-approved design, so
-it is not behind the design gate.
+**One screen is still reachable only in `../design/`: the Site Admin panel**
+(`#/admin` — create account, activate/deactivate, grant/revoke Site Admin).
+It's part of sub-project 9 (Permissions & Admin) alongside project archiving,
+which *did* ship here; the admin panel itself did not make this branch's scope
+and remains prototype-only. Teammates are still created via Django admin
+(`/admin/`) in the meantime. Wiring it up is Phase 2 work on an already-approved
+design, so it is not behind the design gate — just not yet done.
 
 Genuinely not built anywhere: notifications and reporting (sub-projects 12 and
 13, spec-only), activity history, per-board permissions, and password reset.
