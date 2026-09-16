@@ -1441,3 +1441,30 @@ button, input, textarea, select { font: inherit; color: inherit; }
   font-size: 11px;
   flex-shrink: 0;
 }
+
+/* Automation (sub-project 11) --------------------------------------------- */
+
+.create-automation-rule[hidden] { display: none; }
+.create-automation-rule { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 8px; }
+.create-automation-rule input {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 7px 10px;
+  flex: 1 1 160px;
+}
+.create-automation-rule select,
+.create-automation-rule [data-trigger-fields] select,
+.create-automation-rule [data-action-fields] select,
+.create-automation-rule [data-action-fields] input {
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.create-automation-rule [data-trigger-fields],
+.create-automation-rule [data-action-fields] {
+  display: flex;
+  gap: 6px;
+}
