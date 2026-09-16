@@ -69,12 +69,15 @@ const Logic = (() => {
   const fieldHasOptions = (fieldType) => fieldType === 'select' || fieldType === 'multiselect';
   const isMultiValue = (fieldType) => fieldType === 'multiselect';
 
-  /* Global CustomField/Screen management: Owner of ANY project — not
-     necessarily the one in front of you. `roles` is every role this
-     person holds, across every project they're a member of; derive it
-     from `data.listProjects()`'s `my_role` field per project (see the
-     `isOwnerOfAnyProject` helper in app.js, shared with Labels). */
-  const canManageDefinitions = (roles) => (roles || []).includes('owner');
+  /* Global CustomField/Screen/Label management: a Site Admin, OR Owner of
+     ANY project — not necessarily the one in front of you. `roles` is every
+     role this person holds, across every project they're a member of;
+     derive it from `data.listProjects()`'s `my_role` field per project.
+     Matches design/js/logic.js's signed-off contract exactly; app.js calls
+     this directly rather than through a bespoke per-screen helper, so
+     Fields, Screens and Labels can never drift out of lockstep with each
+     other again. */
+  const canManageDefinitions = (roles, isStaff) => !!isStaff || (roles || []).includes('owner');
 
   // Per-project screen assignment — same Owner/Admin tier already used for
   // Components, Statuses, Releases, Automation, Sprints.

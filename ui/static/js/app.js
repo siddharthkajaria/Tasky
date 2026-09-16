@@ -382,7 +382,11 @@ async function viewFields() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  // is_staff isn't reliably present on /api/auth/me/ today — this OR is
+  // dormant until that's fixed, but keeps canManageDefinitions here honestly
+  // matching design/js/logic.js's signed-off contract for Fields, Screens
+  // and Labels alike.
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (canManage) {
     form.hidden = false;
@@ -635,7 +639,7 @@ async function viewScreens() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (canManage) {
     form.hidden = false;
@@ -3315,10 +3319,6 @@ function taskRow(item) {
 
 /* Labels admin (sub-project 4) ------------------------------------------ */
 
-function isOwnerOfAnyProject(projects) {
-  return (projects || []).some(p => p.my_role === 'owner');
-}
-
 async function viewLabels() {
   const main = outlet();
   main.replaceChildren(tpl('tpl-labels'));
@@ -3329,7 +3329,7 @@ async function viewLabels() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (!canManage) {
     locked.hidden = false;
