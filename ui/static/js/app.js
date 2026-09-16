@@ -624,7 +624,7 @@ function statusRow(status, i, all, main, project) {
       ? `<select data-category aria-label="Category for ${esc(status.name)}">${Logic.CATEGORIES.map(c =>
           `<option value="${c}" ${c === status.category ? 'selected' : ''}>${Logic.CATEGORY_LABELS[c]}</option>`
         ).join('')}</select>`
-      : `<span class="hint" style="margin:0">${Logic.CATEGORY_LABELS[status.category]}</span>`) +
+      : `<span class="empty-inline">${Logic.CATEGORY_LABELS[status.category]}</span>`) +
     (canManage ? `<button class="btn btn-danger" type="button" data-remove>Delete</button>` : '');
 
   const run = async (fn) => {
@@ -941,7 +941,7 @@ async function viewBoard(projectId, boardId) {
       data.listStatuses(projectId),
     ]);
 
-const nameEl = main.querySelector('[data-board-name]');
+    const nameEl = main.querySelector('[data-board-name]');
     nameEl.textContent = board.name;
     // Any project member may rename a board — BoardViewSet has no
     // can_manage_* role gate, unlike Components/Statuses (verified against
@@ -956,6 +956,7 @@ const nameEl = main.querySelector('[data-board-name]');
       try {
         const updated = await data.updateBoard(board.id, { name: value });
         board.name = updated.name;
+        nameEl.textContent = board.name;
         toast('Board renamed');
       } catch (err) {
         nameEl.textContent = board.name;
@@ -980,6 +981,7 @@ const nameEl = main.querySelector('[data-board-name]');
       try {
         const updated = await data.updateBoard(board.id, { description: value });
         board.description = updated.description;
+        descEl.textContent = board.description || '';
         toast('Description updated');
       } catch (err) {
         descEl.textContent = board.description || '';
