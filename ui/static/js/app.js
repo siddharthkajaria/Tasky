@@ -3329,6 +3329,15 @@ async function openLinkModal(item, ctx) {
   const errorEl = modal.querySelector('[data-error]');
   if (!input || !resultsEl) return;
 
+  /* `document.body.contains(modal)` alone has a gap: `close()` only removes
+     the scrim from the DOM after its 200ms fade-out `setTimeout`, but it
+     drops the `is-open` class SYNCHRONOUSLY, on every close path (Escape,
+     backdrop, Cancel, or our own `close()` call below) since they all run
+     the same shared function. Reading that class instead — rather than DOM
+     presence — closes the fade-out window during which a debounced search
+     could still fire and write into an already-dismissed modal. */
+  const isModalOpen = () => !!(modal.parentElement && modal.parentElement.classList.contains('is-open'));
+
   /* Everything the API would reject anyway: itself, an existing link, and
      its own parent or children. The old board-scoped candidate list came
      from full work-item objects (which carry `parent`), so it could spot a
@@ -3341,6 +3350,7 @@ async function openLinkModal(item, ctx) {
   try {
     childIds = new Set((await data.listChildren(item.id)).map(c => c.id));
   } catch { /* best-effort — a stale exclusion list just surfaces the API's own 400 on submit */ }
+  if (!isModalOpen()) return;
 
   const isExcluded = (candidate) =>
     candidate.id === item.id ||
@@ -3358,11 +3368,13 @@ async function openLinkModal(item, ctx) {
       errorEl.hidden = true;
       try {
         await data.createLink(item.id, candidate.id);
+        if (!isModalOpen()) return;
         close();
         toast('Linked');
         loadLinks(item, ctx);
       } catch (err) {
         if (err && err.sessionExpired) { close(); return handle(err); }
+        if (!isModalOpen()) return;
         errorEl.textContent = errorText(err);
         errorEl.hidden = false;
       }
@@ -3382,12 +3394,12 @@ async function openLinkModal(item, ctx) {
   // Debounced, and guarded against two overlapping searches resolving out of
   // order: `searchSeq` mirrors the `bulkBarSeq` guard in renderBulkBar —
   // whichever request was started LAST wins the render, even if an earlier
-  // one's response arrives after it. `document.body.contains(modal)` covers
-  // the other risk: the modal can close (Escape, backdrop, Cancel, a
-  // successful pick) while a debounce timer or an in-flight search is still
-  // pending, and none of those close paths run code of ours — so every place
-  // that would otherwise write into `resultsEl` checks the modal is still in
-  // the document first, rather than touching a removed node.
+  // one's response arrives after it. `isModalOpen()` covers the other risk:
+  // the modal can close (Escape, backdrop, Cancel, a successful pick) while
+  // a debounce timer or an in-flight search is still pending, and none of
+  // those close paths run code of ours — so every place that would
+  // otherwise write into `resultsEl` checks the modal is still open first,
+  // rather than touching a dismissed one.
   let debounceTimer = null;
   let searchSeq = 0;
 
@@ -3399,16 +3411,16 @@ async function openLinkModal(item, ctx) {
       return;
     }
     debounceTimer = setTimeout(() => {
-      if (!document.body.contains(modal)) return;
+      if (!isModalOpen()) return;
       const mySeq = ++searchSeq;
       renderHint('Searching…');
       data.search({ q: value }).then(({ results }) => {
-        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        if (mySeq !== searchSeq || !isModalOpen()) return;
         const candidates = results.filter(r => !isExcluded(r));
         if (!candidates.length) { renderHint('No matching items found.'); return; }
         resultsEl.replaceChildren(...candidates.map(linkPickerRow));
       }).catch((err) => {
-        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        if (mySeq !== searchSeq || !isModalOpen()) return;
         if (err && err.sessionExpired) { close(); return handle(err); }
         renderHint(errorText(err));
       });

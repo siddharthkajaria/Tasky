@@ -3090,6 +3090,13 @@ async function openLinkModal(item, parentModal) {
   const errorEl = modal.querySelector('[data-error]');
   if (!input || !resultsEl) return;
 
+  /* `document.body.contains(modal)` alone has a gap: `close()` only removes
+     the scrim from the DOM after its fade-out timeout, but it drops the
+     `is-open` class SYNCHRONOUSLY on every close path. Reading that class
+     instead of DOM presence closes the fade-out window during which a
+     debounced search could still fire into an already-dismissed modal. */
+  const isModalOpen = () => !!(modal.parentElement && modal.parentElement.classList.contains('is-open'));
+
   function renderHint(text) {
     resultsEl.innerHTML = `<li class="empty-inline">${esc(text)}</li>`;
   }
@@ -3100,10 +3107,12 @@ async function openLinkModal(item, parentModal) {
       errorEl.hidden = true;
       try {
         await Store.createLink(item.id, candidate.id);
+        if (!isModalOpen()) return;
         close();
         toast('Linked');
         loadLinks(item, parentModal);
       } catch (err) {
+        if (!isModalOpen()) return;
         errorEl.textContent = errorText(err);
         errorEl.hidden = false;
       }
@@ -3122,9 +3131,9 @@ async function openLinkModal(item, parentModal) {
 
   // Debounced, and guarded the same way ui/static/js/app.js's copy of this
   // is: `searchSeq` makes a late-resolving stale response lose to whichever
-  // search started last, and `document.body.contains(modal)` stops a
-  // pending timer or in-flight request from writing into a modal the user
-  // has already closed (Escape, backdrop, Cancel, or a successful pick).
+  // search started last, and `isModalOpen()` stops a pending timer or
+  // in-flight request from writing into a modal the user has already
+  // closed (Escape, backdrop, Cancel, or a successful pick).
   let debounceTimer = null;
   let searchSeq = 0;
 
@@ -3136,16 +3145,16 @@ async function openLinkModal(item, parentModal) {
       return;
     }
     debounceTimer = setTimeout(() => {
-      if (!document.body.contains(modal)) return;
+      if (!isModalOpen()) return;
       const mySeq = ++searchSeq;
       renderHint('Searching…');
       Store.search({ q: value }).then(({ results }) => {
-        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        if (mySeq !== searchSeq || !isModalOpen()) return;
         const candidates = results.filter(r => r.id !== item.id);
         if (!candidates.length) { renderHint('No matching items found.'); return; }
         resultsEl.replaceChildren(...candidates.map(linkPickerRow));
       }).catch((err) => {
-        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        if (mySeq !== searchSeq || !isModalOpen()) return;
         renderHint(errorText(err));
       });
     }, LINK_SEARCH_DEBOUNCE_MS);
