@@ -876,6 +876,7 @@ async function viewProject(projectId) {
   renderComponents(main, project);
   renderStatuses(main, project);
   renderScreenAssignments(main, project);
+  renderReleases(main, project);
   renderMembers(main, project);
 }
 
@@ -1269,6 +1270,134 @@ function assignmentRow(itemType, screenId, allScreens, project, canEdit, main) {
       }
     });
   }
+  return li;
+}
+
+/* Releases (sub-project 7) ------------------------------------------------ */
+
+async function renderReleases(main, project) {
+  const list = main.querySelector('[data-releases]');
+  const form = main.querySelector('[data-create-release]');
+  if (!list || !form) return;
+  const canManage = Logic.canManageReleases(project.my_role);
+  form.hidden = !canManage;
+  list.innerHTML = skeletonList(2);
+
+  if (!form.dataset.wired) {
+    form.dataset.wired = '1';
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nameInput = form.querySelector('[name=name]');
+      const dateInput = form.querySelector('[name=release_date]');
+      if (!nameInput.value.trim()) return;
+      try {
+        await data.createRelease(project.id, { name: nameInput.value, release_date: dateInput.value || null });
+        nameInput.value = '';
+        dateInput.value = '';
+        await renderReleases(main, project);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  try {
+    const items = await data.listReleases(project.id);
+    if (!items.length) {
+      list.innerHTML = '<p class="empty">No releases yet.</p>';
+      return;
+    }
+    const cards = await Promise.all(items.map(r => releaseCard(r, main, project, canManage)));
+    list.replaceChildren(...cards);
+    stagger(cards);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => renderReleases(main, project));
+  }
+}
+
+async function releaseCard(release, main, project, canManage) {
+  const card = document.createElement('div');
+  card.className = `release-card status-${release.status}`;
+
+  card.innerHTML =
+    `<div class="release-head">` +
+      `<span class="release-name" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(release.name)}</span>` +
+      (canManage
+        ? `<select class="release-status-select" data-status aria-label="Status for ${esc(release.name)}">${
+            Logic.RELEASE_STATUSES.map(s => `<option value="${s}" ${s === release.status ? 'selected' : ''}>${Logic.RELEASE_STATUS_LABEL[s]}</option>`).join('')
+          }</select>`
+        : `<span class="release-status-badge state-${release.status}">${Logic.RELEASE_STATUS_LABEL[release.status]}</span>`) +
+      (canManage
+        ? `<input type="date" class="release-date-input" data-date value="${esc(release.release_date || '')}" aria-label="Date for ${esc(release.name)}">`
+        : `<span class="row-meta">${release.release_date ? esc(release.release_date) : 'No date set'}</span>`) +
+      (canManage ? `<button class="btn btn-danger" type="button" data-delete>Delete</button>` : '') +
+    `</div>` +
+    `<ul class="release-items" data-items></ul>`;
+
+  const itemsEl = card.querySelector('[data-items]');
+  try {
+    const items = await data.listReleaseWorkItems(project.id, release.id);
+    itemsEl.innerHTML = items.length
+      ? ''
+      : '<li class="empty-inline">Nothing tagged with this release yet.</li>';
+    if (items.length) itemsEl.replaceChildren(...items.map(item => releaseItemRow(item, project.id)));
+  } catch (err) { handle(err); }
+
+  const run = async (fn) => {
+    try { await fn(); await renderReleases(main, project); } catch (err) { handle(err); }
+  };
+
+  const nameEl = card.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      if (e.key === 'Escape') { nameEl.textContent = release.name; nameEl.blur(); }
+    });
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === release.name) { nameEl.textContent = release.name; return; }
+      try {
+        await data.updateRelease(project.id, release.id, { name: value });
+        toast('Release renamed');
+      } catch (err) {
+        nameEl.textContent = release.name;
+        handle(err);
+      }
+    });
+  }
+  const statusEl = card.querySelector('[data-status]');
+  if (statusEl) statusEl.addEventListener('change', () => run(() => data.updateRelease(project.id, release.id, { status: statusEl.value })));
+  const dateEl = card.querySelector('[data-date]');
+  if (dateEl) dateEl.addEventListener('change', () => run(() => data.updateRelease(project.id, release.id, { release_date: dateEl.value || null })));
+  const deleteBtn = card.querySelector('[data-delete]');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm(`Delete "${release.name}"? Any tagged work items will be un-tagged, not deleted.`)) return;
+    await run(() => data.deleteRelease(project.id, release.id));
+  });
+
+  return card;
+}
+
+/* Reached from the project page, not a board — boardState isn't already
+   pointed at this item's board, so it's set explicitly before opening the
+   modal (which reads boardState.projectId/boardId to load components,
+   members and sibling items for the parent picker). */
+function releaseItemRow(item, projectId) {
+  const li = document.createElement('li');
+  li.className = 'release-item-row';
+  li.innerHTML =
+    `<a href="#" data-open-item>` +
+      `<span class="key-pill">${esc(item.key)}</span>` +
+      `<span class="type-badge type-${esc(item.item_type)}">${esc(Logic.ITEM_TYPE_LABEL[item.item_type])}</span>` +
+      `<span class="title">${esc(item.title)}</span>` +
+      `<span class="status-tag">${item.status_detail ? esc(item.status_detail.name) : ''}</span>` +
+    `</a>`;
+  li.querySelector('[data-open-item]').addEventListener('click', async (e) => {
+    e.preventDefault();
+    boardState.projectId = projectId;
+    boardState.boardId = item.board;
+    try { boardState.statuses = await data.listStatuses(projectId); } catch { /* modal shows what it can */ }
+    openWorkItemModal(item.id);
+  });
   return li;
 }
 
@@ -1773,6 +1902,9 @@ function workItemCard(item) {
         `<span class="label-chip label-chip-sm" style="background:${esc(l.color)}">${esc(l.name)}</span>`
       ).join('')}</div>`
     : '';
+  const releaseChip = item.release_detail
+    ? `<span class="release-chip-sm state-${esc(item.release_detail.status)}">${esc(item.release_detail.name)}</span>`
+    : '';
 
   el.innerHTML =
     `<div class="wi-top">` +
@@ -1782,7 +1914,7 @@ function workItemCard(item) {
     `<p class="card-title">${esc(item.title)}</p>` +
     components +
     labelChips +
-    (parent || due || who ? `<div class="card-meta">${parent}${due}${who}</div>` : '');
+    (parent || due || releaseChip || who ? `<div class="card-meta">${parent}${due}${releaseChip}${who}</div>` : '');
 
   el.addEventListener('click', () => openWorkItemModal(item.id));
   el.addEventListener('keydown', (e) => {
@@ -1972,9 +2104,10 @@ async function openWorkItemModal(itemId) {
   } catch (err) { return handle(err); }
 
   try { allLabels = await data.listLabels(); } catch { allLabels = []; }
-  let members = [], screen = null;
+  let members = [], screen = null, projectReleases = [];
   try { members = await data.listMembers(boardState.projectId); } catch { /* proceed without user_picker options */ }
   try { screen = await data.getScreenForItemType(boardState.projectId, item.item_type); } catch { screen = null; }
+  try { projectReleases = await data.listReleases(boardState.projectId); } catch { projectReleases = []; }
   const screenRows = screen ? screen.fields : [];
   const users = await cachedUsers();
   const projectComponents = boardState.components || [];
@@ -2022,8 +2155,11 @@ async function openWorkItemModal(itemId) {
       `<label class="field"><span>Assignee</span>` +
         `<select name="assignee"><option value="">Unassigned</option>${assigneeOptions}</select></label>` +
     `</div>` +
-    `<div class="grid-2">` +
+    `<div class="grid-3">` +
       `<label class="field"><span>Due</span><input type="date" name="due_date" value="${esc(item.due_date || '')}"></label>` +
+      `<label class="field"><span>Release</span><select name="release"><option value="">No release</option>${
+        projectReleases.map(r => `<option value="${r.id}" ${item.release === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')
+      }</select></label>` +
       (showParent
         ? `<label class="field"><span>Parent${parentRequired ? ' (required)' : ''}</span>` +
           `<select name="parent"${candidates.length ? '' : ' disabled'}>${
@@ -2108,6 +2244,7 @@ async function openWorkItemModal(itemId) {
     }, item.item_type);
     fields.labels = labelInput.getNames();
     if (screenRows.length) fields.custom_fields = readCustomFieldInputs(modal, screenRows);
+    fields.release = modal.querySelector('[name=release]').value || null;
 
     const newStatus = Number(modal.querySelector('[name=status]').value);
 
