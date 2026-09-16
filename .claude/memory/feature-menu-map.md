@@ -32,13 +32,13 @@ needing any project role.
 - **Access:** any authenticated user; lists only projects you are a member of
 
 ### `#/projects/:id` — Project detail
-- **Data:** name, key, your role, member list with role badges, board list, component list
-- **Actions:** create board · invite member (Owner/Admin) · remove member (Owner any non-Owner; Admin members only) · change role (Owner) · transfer ownership (Owner) · delete project (Owner) · leave project (Admin/Member — Owner must transfer first) · add/rename/delete component (Owner/Admin)
+- **Data:** name, key, your role, member list with role badges, board list, component list, status list (Statuses section)
+- **Actions:** create board · invite member (Owner/Admin) · remove member (Owner any non-Owner; Admin members only) · change role (Owner) · transfer ownership (Owner) · delete project (Owner) · leave project (Admin/Member — Owner must transfer first) · add/rename/delete component (Owner/Admin) · rename/reorder/recategorize/add/delete status (Owner/Admin, via the Statuses section)
 - **Access:** members of that project. A non-member gets 403, a missing id 404.
 
 ### `#/projects/:pid/boards/:bid` — Board (the core screen)
 - **Data:** one column per `WorkItemStatus`, coloured by category not name. Cards show key pill, type badge, title, assignee, due date, parent chip, component chips, left edge rule (thickness = priority, red = overdue)
-- **Actions:** add work item · open detail modal · **drag to move columns** (only path that changes status) · edit title/description/priority/due date/assignee/parent/components · manage "relates to" links · comment (delete own only) · delete item
+- **Actions:** add work item · open detail modal · **drag to move columns** (only path that changes status) · edit title/description/priority/due date/assignee/parent/components · manage "relates to" links · comment (delete own only) · delete item · rename board / edit description (inline, any project member)
 - **Access:** project members
 - **Note:** `GET /api/boards/:id/work-items/` returns all columns interleaved in one position-ordered list; the client groups by `status` itself.
 
@@ -78,7 +78,6 @@ Also prototype-only, embedded in existing screens:
 
 | Feature | Where | Notes |
 |---|---|---|
-| **Statuses (Workflows)** | Project detail section | rename, reorder, recategorize, add, delete. `ui/` reads statuses but offers no management UI |
 | **Releases** | Project detail section | create, rename, status (Unreleased/Released/Archived), target date, delete. Project-scoped; name unique per project. Tag a work item with a release from its detail modal (any member) |
 | **Automation** | Project detail section | rules in plain English. Triggers: work item created, status changed. Actions: apply label, assign, clear assignee, change status. Members see the list; Owner/Admin manage |
 | **Attachments** | Work item detail modal | upload, download, delete. Delete = uploader **or** project Owner/Admin (wider than comments, which are author-only) |

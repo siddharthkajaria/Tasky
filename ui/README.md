@@ -142,12 +142,15 @@ Reachable only in `../design/`, never in production:
 
 custom fields and screens · labels · cross-project search · sprints and backlog ·
 releases · attachments · site admin · project templates · automation ·
-bulk operations · CSV import · project archiving · status management (this UI
-*reads* per-project statuses but cannot edit them)
+bulk operations · CSV import · project archiving
 
 `static/js/api.js` is the honest measure — it defines no client method for any of
-those endpoints. Wiring them up is Phase 2 work on an already-approved design, so
-it is not behind the design gate.
+those endpoints. (Status management and board rename/description used to belong
+on this list too; `api.js` now has `createStatus`/`updateStatus`/`deleteStatus`
+and `updateBoard`, both shipped in production — the Statuses section on the
+project page and the inline-editable board name/description.) Wiring the rest up
+is Phase 2 work on an already-approved design, so it is not behind the design
+gate.
 
 Genuinely not built anywhere: notifications and reporting (sub-projects 12 and
 13, spec-only), activity history, per-board permissions, and password reset.

@@ -257,6 +257,25 @@ work-item read path) finding from that review was fixed before merge; these are 
   `SET_NULL` only ever writes the one column, so this is safe — the test just doesn't pin it as
   tightly as the spec's own wording ("without touching any other field") asks for.
 
+## Statuses management UI & board rename/description (2026-09-16) — deferred items
+
+Nothing here blocks the branch — both items were considered during the final whole-branch review
+and consciously deferred as Minor. The four Important and two other Minor findings from that
+review (stale docs claiming no management UI/board editing, the undefined `.hint` CSS class, the
+board-edit success path not normalizing the DOM after save, an uncommitted plan doc, and a stray
+indentation slip) were fixed before merge; these are what's left.
+
+- **`ui/static/js/store.js`'s `updateStatus` mutates `status.name` before validating the
+  category-change guard**, so a rejected combined `{name, category}` PATCH could leave the mock's
+  status object with the name already changed even though the whole request should have failed
+  atomically — the real server validates fully before saving. Currently unreachable from the actual
+  UI, since rename and recategorize are separate handlers in this app, so it's low-priority — but
+  it's a latent divergence from `store.js`'s stated job of mirroring server invariants exactly.
+- **`ui/static/js/app.js`'s `renderStatuses` resets the "add a status" form's category `<select>`
+  on every re-render**, including after an unrelated row action like reordering or deleting a
+  different status, which can silently discard a value the user already picked in the still-open
+  add form before submitting it.
+
 ## Local development note
 
 Machine setup is per-developer and belongs in
