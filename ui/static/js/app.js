@@ -364,6 +364,7 @@ async function viewProject(projectId) {
   renderProjectActions(main, project);
   renderBoards(main, project);
   renderComponents(main, project);
+  renderStatuses(main, project);
   renderMembers(main, project);
 }
 
@@ -547,6 +548,125 @@ function componentRow(component, main, project) {
         toast('Component deleted');
         await renderComponents(main, project);
       } catch (err) { handle(err); }
+    });
+  }
+  return li;
+}
+
+/* Statuses (sub-project 3, Workflows) ----------------------------------
+   These ARE the board's columns — an ordered, hand-sorted list so
+   reordering, renaming and recategorizing all read as one idea. */
+
+async function renderStatuses(main, project) {
+  const list = main.querySelector('[data-statuses]');
+  const form = main.querySelector('[data-create-status]');
+  const note = main.querySelector('[data-status-note]');
+  const canManage = Logic.canManageStatuses(project.my_role);
+
+  note.textContent = canManage
+    ? 'The board’s columns for this project, in order. Each of To Do, In Progress and Done needs at least one status.'
+    : 'The board’s columns for this project, in order. Owner and Admins manage the list.';
+
+  const categorySelect = form.querySelector('[data-category-select]');
+  categorySelect.innerHTML = Logic.CATEGORIES.map(c =>
+    `<option value="${c}">${Logic.CATEGORY_LABELS[c]}</option>`
+  ).join('');
+
+  if (!form.dataset.wired) {
+    form.dataset.wired = '1';
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector('[name=name]');
+      const btn = e.target.querySelector('button');
+      if (!input.value.trim()) return;
+      btn.disabled = true;
+      try {
+        await data.createStatus(project.id, { name: input.value, category: categorySelect.value });
+        input.value = '';
+        toast('Status added');
+        await renderStatuses(main, project);
+      } catch (err) {
+        handle(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+  form.hidden = !canManage;
+
+  list.innerHTML = skeletonList(2);
+  try {
+    const statuses = await data.listStatuses(project.id);
+    const rows = statuses.map((s, i) => statusRow(s, i, statuses, main, project));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => renderStatuses(main, project));
+  }
+}
+
+function statusRow(status, i, all, main, project) {
+  const canManage = Logic.canManageStatuses(project.my_role);
+  const last = i === all.length - 1;
+  const li = document.createElement('li');
+  li.className = 'order-row';
+  li.innerHTML =
+    (canManage
+      ? `<span class="order-handle">` +
+          `<button class="icon-btn" type="button" data-up ${i === 0 ? 'disabled' : ''} aria-label="Move up">▲</button>` +
+          `<button class="icon-btn" type="button" data-down ${last ? 'disabled' : ''} aria-label="Move down">▼</button>` +
+        `</span>`
+      : '') +
+    `<span class="cat-dot cat-${esc(status.category)}"></span>` +
+    `<span class="label"${canManage ? ' contenteditable="true" role="textbox" aria-label="Status name" data-rename' : ''}>${esc(status.name)}</span>` +
+    (canManage
+      ? `<select data-category aria-label="Category for ${esc(status.name)}">${Logic.CATEGORIES.map(c =>
+          `<option value="${c}" ${c === status.category ? 'selected' : ''}>${Logic.CATEGORY_LABELS[c]}</option>`
+        ).join('')}</select>`
+      : `<span class="hint" style="margin:0">${Logic.CATEGORY_LABELS[status.category]}</span>`) +
+    (canManage ? `<button class="btn btn-danger" type="button" data-remove>Delete</button>` : '');
+
+  const run = async (fn) => {
+    try {
+      await fn();
+      await renderStatuses(main, project);
+    } catch (err) { handle(err); }
+  };
+
+  const up = li.querySelector('[data-up]');
+  if (up) up.addEventListener('click', () => run(() => data.updateStatus(project.id, status.id, { position: i - 1 })));
+  const down = li.querySelector('[data-down]');
+  if (down) down.addEventListener('click', () => run(() => data.updateStatus(project.id, status.id, { position: i + 1 })));
+
+  const remove = li.querySelector('[data-remove]');
+  if (remove) remove.addEventListener('click', () => {
+    if (!confirm(`Delete the "${status.name}" status? It must not be in use, and its category must keep at least one other status.`)) return;
+    run(() => data.deleteStatus(project.id, status.id));
+  });
+
+  const categoryEl = li.querySelector('[data-category]');
+  if (categoryEl) {
+    categoryEl.addEventListener('change', () => run(() => data.updateStatus(project.id, status.id, { category: categoryEl.value })));
+  }
+
+  const nameEl = li.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === status.name) { nameEl.textContent = status.name; return; }
+      try {
+        await data.updateStatus(project.id, status.id, { name: value });
+        status.name = value;
+        toast('Status renamed');
+      } catch (err) {
+        nameEl.textContent = status.name;
+        handle(err);
+      }
+    });
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      if (e.key === 'Escape') { nameEl.textContent = status.name; nameEl.blur(); }
     });
   }
   return li;
