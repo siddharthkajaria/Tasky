@@ -146,6 +146,15 @@ const Store = (() => {
   const releaseById = (rid) => releases.find(r => r.id === Number(rid)) || null;
   const releaseOut = (r) => Object.assign({}, r);
 
+  let attachments = [];
+  let nextAttachmentId = 10000;
+  const attachmentById = (aid) => attachments.find(a => a.id === Number(aid)) || null;
+  const attachmentOut = (a) => ({
+    id: a.id, work_item: a.work_item, filename: a.filename, size: a.size,
+    uploaded_by_detail: a.uploaded_by ? userById(a.uploaded_by) : null,
+    uploaded_at: a.uploaded_at,
+  });
+
   const fieldOut = (f) => Object.assign({}, f, {
     options: optionsForField(f.id),
     created_by: userById(f.created_by),
@@ -1412,6 +1421,62 @@ const Store = (() => {
     return wait(workItems.filter(w => w.release === release.id).map(itemOut));
   }
 
+  /* ---- attachments ---------------------------------------------------------
+     Real bytes: `file` is a genuine File from an <input type=file>, kept as
+     a Blob in memory for the tab's lifetime (never sent anywhere — this is
+     the mock) and served back out via a fresh object URL on download, so
+     "download" in mock mode round-trips the actual bytes the user picked. */
+
+  const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024;
+
+  function listAttachments(itemId) {
+    const item = itemById(itemId);
+    if (!item) return fail(404, { detail: 'Not found.' });
+    if (!myRole(boardProject(item.board))) return denied();
+    return wait(attachments.filter(a => a.work_item === item.id).map(attachmentOut));
+  }
+
+  function uploadAttachment(itemId, file) {
+    const item = itemById(itemId);
+    if (!item) return fail(404, { detail: 'Not found.' });
+    if (!myRole(boardProject(item.board))) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+    if (!file) return fail(400, { file: 'This field is required.' });
+    if (file.size > MAX_ATTACHMENT_SIZE) return fail(400, { file: 'File exceeds the 25 MB limit.' });
+    const attachment = {
+      id: ++nextAttachmentId, work_item: item.id, filename: file.name, size: file.size,
+      uploaded_by: me.id, uploaded_at: now(), blob: file,
+    };
+    attachments.push(attachment);
+    return wait(attachmentOut(attachment));
+  }
+
+  function deleteAttachment(attachmentId) {
+    const attachment = attachmentById(attachmentId);
+    if (!attachment) return fail(404, { detail: 'Not found.' });
+    const item = itemById(attachment.work_item);
+    const role = myRole(boardProject(item.board));
+    if (!role) return denied();
+    if (projectById(boardProject(item.board)).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+    if (!Logic.canDeleteAttachment(attachment.uploaded_by, me.id, role)) {
+      return fail(403, { detail: 'Only the uploader or an Owner/Admin can delete this attachment.' });
+    }
+    attachments = attachments.filter(a => a.id !== attachment.id);
+    return wait(null);
+  }
+
+  // Not async, not a network call — matches Api.downloadUrl's synchronous
+  // shape. A fresh object URL every call, since the previous one may have
+  // already been revoked by the browser tab navigating away.
+  function downloadUrl(attachmentId) {
+    const attachment = attachmentById(attachmentId);
+    return attachment ? URL.createObjectURL(attachment.blob) : '#';
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1494,6 +1559,7 @@ const Store = (() => {
     addScreenField, setScreenFieldRequired, moveScreenField, removeScreenField,
     listScreenAssignments, setScreenAssignments, getScreenForItemType,
     listReleases, createRelease, updateRelease, deleteRelease, listReleaseWorkItems,
+    listAttachments, uploadAttachment, deleteAttachment, downloadUrl,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
   };

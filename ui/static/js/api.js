@@ -176,5 +176,30 @@ const Api = (() => {
     updateRelease: (projectId, id, fields) => request(`/api/projects/${projectId}/releases/${id}/`, { method: 'PATCH', body: fields }),
     deleteRelease: (projectId, id)      => request(`/api/projects/${projectId}/releases/${id}/`, { method: 'DELETE' }),
     listReleaseWorkItems: (projectId, id) => request(`/api/projects/${projectId}/releases/${id}/work-items/`),
+
+    /* Attachments --------------------------------------------------------- */
+    listAttachments: (itemId) => request(`/api/work-items/${itemId}/attachments/`),
+    uploadAttachment: async (itemId, file) => {
+      const form = new FormData();
+      form.append('file', file);
+      const token = getCookie('csrftoken');
+      const res = await fetch(`/api/work-items/${itemId}/attachments/`, {
+        method: 'POST',
+        headers: token ? { 'X-CSRFToken': token } : {},
+        credentials: 'same-origin',
+        body: form,
+      });
+      if (res.ok) return parseBody(res);
+      const data = await parseBody(res);
+      if (res.status === 403) {
+        const me = await fetch('/api/auth/me/', { credentials: 'same-origin' });
+        const err = Object.assign(new Error('Forbidden'), { status: 403, data });
+        err.sessionExpired = (me.status === 403);
+        throw err;
+      }
+      throw Object.assign(new Error('API ' + res.status), { status: res.status, data });
+    },
+    deleteAttachment: (id) => request(`/api/attachments/${id}/`, { method: 'DELETE' }),
+    downloadUrl: (id) => `/api/attachments/${id}/download/`,
   };
 })();
