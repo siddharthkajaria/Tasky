@@ -196,6 +196,8 @@ async function route() {
 
   if (hash === '/my-tasks') { setActiveNav('my-tasks'); return viewMyTasks(); }
 
+  if (hash === '/search') { setActiveNav('search'); return viewSearch(); }
+
   if (hash === '/screens') { setActiveNav('screens'); return viewScreens(); }
 
   if (hash === '/fields') { setActiveNav('fields'); return viewFields(); }
@@ -1470,6 +1472,70 @@ function attachmentRow(a, item, modal, myRoleHere) {
       } catch (err) { handle(err); }
     });
   }
+  return li;
+}
+
+/* Search (sub-project 5) --------------------------------------------------- */
+
+async function viewSearch() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-search'));
+
+  const form = main.querySelector('[data-search-form]');
+  const errorEl = main.querySelector('[data-error]');
+  const resultsEl = main.querySelector('[data-results]');
+
+  form.querySelector('[name=item_type]').append(...Logic.ITEM_TYPES.map(t => new Option(Logic.ITEM_TYPE_LABEL[t], t)));
+  form.querySelector('[name=status_category]').append(...Logic.CATEGORIES.map(c => new Option(Logic.CATEGORY_LABELS[c], c)));
+  form.querySelector('[name=priority]').append(new Option('Low', '1'), new Option('Medium', '2'), new Option('High', '3'));
+
+  try {
+    const [users, myProjects, allLabels] = await Promise.all([data.listUsers(), data.listProjects(), data.listLabels()]);
+    form.querySelector('[name=assignee]').append(...users.map(u => new Option(u.display_name || u.username, u.id)));
+    form.querySelector('[name=project]').append(...myProjects.map(p => new Option(`${p.key} — ${p.name}`, p.id)));
+    form.querySelector('[name=label]').append(...allLabels.map(l => new Option(l.name, l.id)));
+  } catch { /* facets are a nice-to-have; a plain text search still works without them */ }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorEl.hidden = true;
+    const formData = new FormData(form);
+    const params = {};
+    for (const [key, value] of formData.entries()) { if (value) params[key] = value; }
+
+    resultsEl.innerHTML = skeletonList(4);
+    try {
+      const { results } = await data.search(params);
+      if (!results.length) {
+        resultsEl.innerHTML = '<li class="empty">No matches.</li>';
+        return;
+      }
+      const rows = results.map(searchResultRow);
+      resultsEl.replaceChildren(...rows);
+      stagger(rows);
+    } catch (err) {
+      if (err && err.sessionExpired) return handle(err);
+      resultsEl.innerHTML = '';
+      errorEl.textContent = errorText(err);
+      errorEl.hidden = false;
+    }
+  });
+}
+
+function searchResultRow(item) {
+  const li = document.createElement('li');
+  li.className = 'search-result-row';
+  const who = item.assignee_detail
+    ? `<span class="who-chip">${esc(item.assignee_detail.display_name || item.assignee_detail.username)}</span>`
+    : '';
+  li.innerHTML =
+    `<a href="#/projects/${item.project.id}/boards/${item.board.id}">` +
+      `<span class="key-pill">${esc(item.key)}</span>` +
+      `<span class="type-badge type-${esc(item.item_type)}">${esc(Logic.ITEM_TYPE_LABEL[item.item_type])}</span>` +
+      `<span class="search-title">${esc(item.title)}</span>` +
+      `<span class="search-meta">${esc(item.project.key)} · ${item.status_detail ? esc(item.status_detail.name) : ''}</span>` +
+      who +
+    `</a>`;
   return li;
 }
 
