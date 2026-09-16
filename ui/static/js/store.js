@@ -1482,6 +1482,76 @@ const Store = (() => {
     return attachment ? URL.createObjectURL(attachment.blob) : '#';
   }
 
+  /* ---- search --------------------------------------------------------------
+     Cross-project, scoped to the caller's own memberships first, before any
+     facet narrows further — a forged component/label/project value from a
+     project the caller isn't in can never surface a result from it. */
+
+  function search(params) {
+    params = params || {};
+    const q = (params.q || '').trim();
+    if (!q && !params.item_type && !params.status_category && !params.priority && !params.assignee && !params.component && !params.label && !params.project) {
+      return fail(400, { detail: 'Provide a search term or at least one filter.' });
+    }
+    if (q && q.length < 2) return fail(400, { q: 'Must be at least 2 characters.' });
+
+    const myProjectIds = new Set(memberships.filter(m => m.user === me.id).map(m => m.project));
+    let pool = workItems.filter(w => myProjectIds.has(boardProject(w.board)));
+
+    if (params.project) {
+      const pid = Number(params.project);
+      if (!myProjectIds.has(pid)) return fail(400, { project: "You're not a member of this project." });
+      pool = pool.filter(w => boardProject(w.board) === pid);
+    }
+    if (params.item_type) pool = pool.filter(w => w.item_type === params.item_type);
+    if (params.status_category) pool = pool.filter(w => (statusById(w.status) || {}).category === params.status_category);
+    if (params.priority) pool = pool.filter(w => w.priority === Number(params.priority));
+    if (params.assignee) {
+      const uid = Number(params.assignee);
+      if (!userById(uid)) return fail(400, { assignee: 'User not found.' });
+      pool = pool.filter(w => w.assignee === uid);
+    }
+    if (params.component) {
+      const cid = Number(params.component);
+      const component = components.find(c => c.id === cid);
+      if (!component || !myProjectIds.has(component.project)) return fail(400, { component: 'Component not found.' });
+      pool = pool.filter(w => (w.components || []).includes(cid));
+    }
+    if (params.label) {
+      let label = /^\d+$/.test(String(params.label)) ? labelById(params.label) : null;
+      if (!label) label = labelByName(params.label);
+      if (!label) return fail(400, { label: 'Label not found.' });
+      pool = pool.filter(w => (w.labels || []).includes(label.id));
+    }
+
+    let tier1 = [], tier2 = [];
+    if (q) {
+      const lower = q.toLowerCase();
+      pool.forEach(w => {
+        if (w.key.toLowerCase().includes(lower) || w.title.toLowerCase().includes(lower)) tier1.push(w);
+        else if ((w.description || '').toLowerCase().includes(lower)) tier2.push(w);
+      });
+    } else {
+      tier1 = pool;
+    }
+    const byRecency = (a, b) => b.updated_at.localeCompare(a.updated_at) || b.id - a.id;
+    const ranked = tier1.sort(byRecency).concat(tier2.sort(byRecency)).slice(0, 50);
+
+    const results = ranked.map(w => {
+      const board = boardById(w.board);
+      const project = projectById(board.project);
+      return {
+        id: w.id, key: w.key, title: w.title, item_type: w.item_type,
+        status_detail: statusById(w.status), priority: w.priority, priority_label: Logic.PRIORITY_LABELS[w.priority],
+        assignee_detail: w.assignee ? userById(w.assignee) : null,
+        project: { id: project.id, key: project.key, name: project.name },
+        board: { id: board.id, name: board.name },
+        updated_at: w.updated_at,
+      };
+    });
+    return wait({ results });
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1567,5 +1637,6 @@ const Store = (() => {
     listAttachments, uploadAttachment, deleteAttachment, downloadUrl,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
+    search,
   };
 })();
