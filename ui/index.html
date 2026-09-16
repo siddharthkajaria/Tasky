@@ -170,16 +170,21 @@
         </div>
         <p class="page-sub" data-board-desc></p>
       </div>
-      <div class="legend-stack">
-        <p class="legend" data-type-legend></p>
-        <p class="legend">
-          <span class="legend-item"><i class="rule-demo p1"></i>Low</span>
-          <span class="legend-item"><i class="rule-demo p2"></i>Medium</span>
-          <span class="legend-item"><i class="rule-demo p3"></i>High</span>
-          <span class="legend-item"><i class="rule-demo overdue"></i>Overdue</span>
-        </p>
+      <div class="board-head-actions">
+        <div class="legend-stack">
+          <p class="legend" data-type-legend></p>
+          <p class="legend">
+            <span class="legend-item"><i class="rule-demo p1"></i>Low</span>
+            <span class="legend-item"><i class="rule-demo p2"></i>Medium</span>
+            <span class="legend-item"><i class="rule-demo p3"></i>High</span>
+            <span class="legend-item"><i class="rule-demo overdue"></i>Overdue</span>
+          </p>
+        </div>
+        <button class="btn" type="button" data-select-toggle>Select</button>
+        <button class="btn" type="button" data-import-btn>Import</button>
       </div>
     </div>
+    <div class="bulk-bar" data-bulk-bar hidden></div>
     <div class="columns" data-columns></div>
   </div>
 </template>
