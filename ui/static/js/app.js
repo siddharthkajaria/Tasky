@@ -2565,11 +2565,17 @@ async function sprintCard(sprint, boardId, canManage, sprintsEl, backlogEl, allS
   card.className = `sprint-card sprint-${sprint.state}`;
   const dates = [sprint.start_date, sprint.end_date].filter(Boolean).join(' → ');
 
+  // The real Sprint shape (SprintSerializer / store.js's sprintOut) carries
+  // no item_count field — only {id, board, name, goal, state, start_date,
+  // end_date, created_by, created_at}. The count shown here is derived from
+  // the same listSprintWorkItems fetch already made below to populate the
+  // item list, not a second round trip — hence the placeholder span filled
+  // in once that fetch (or the completed-sprint short-circuit) resolves.
   card.innerHTML =
     `<div class="sprint-head">` +
       `<span class="sprint-name">${esc(sprint.name)}</span>` +
       `<span class="sprint-state-badge state-${sprint.state}">${esc(sprint.state)}</span>` +
-      `<span class="row-meta">${sprint.item_count} item${sprint.item_count === 1 ? '' : 's'}${dates ? ' · ' + esc(dates) : ''}</span>` +
+      `<span class="row-meta"><span data-item-count>…</span>${dates ? ' · ' + esc(dates) : ''}</span>` +
       (canManage
         ? `<span class="actions">` +
             (sprint.state === 'planned' ? `<button class="btn" type="button" data-start>Start</button>` : '') +
@@ -2581,12 +2587,19 @@ async function sprintCard(sprint, boardId, canManage, sprintsEl, backlogEl, allS
     (sprint.goal ? `<p class="sprint-goal">${esc(sprint.goal)}</p>` : '') +
     `<ul class="sprint-items" data-items></ul>`;
 
+  const itemCountEl = card.querySelector('[data-item-count]');
+  const setItemCount = (n) => { itemCountEl.textContent = `${n} item${n === 1 ? '' : 's'}`; };
+
   const itemsEl = card.querySelector('[data-items]');
   if (sprint.state === 'completed') {
+    // Completed sprints return their items to the backlog (docs/api.md), so
+    // the count is always 0 and the item-list fetch is skipped entirely.
+    setItemCount(0);
     itemsEl.innerHTML = '<li class="empty-inline">Completed — its items returned to the backlog.</li>';
   } else {
     try {
       const items = await data.listSprintWorkItems(sprint.id);
+      setItemCount(items.length);
       itemsEl.innerHTML = items.length ? '' : '<li class="empty-inline">Nothing scheduled yet.</li>';
       if (items.length) itemsEl.replaceChildren(...items.map(item => backlogRow(item, boardId, allSprints, sprintsEl, backlogEl, canManage)));
     } catch (err) { handle(err); }
