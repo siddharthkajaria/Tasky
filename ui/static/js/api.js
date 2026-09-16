@@ -92,6 +92,12 @@ const Api = (() => {
        Workflows) — not the fixed three-value enum the board used to assume.
        `status` on a work item is one of these ids, never a string. */
     listStatuses: (projectId) => request(`/api/projects/${projectId}/statuses/`),
+    createStatus: (projectId, fields) => request(`/api/projects/${projectId}/statuses/`, { method: 'POST', body: fields }),
+    // `position` is accepted here too — a single PATCH with a new `position`
+    // is enough to reorder; the server clamps and renumbers every sibling in
+    // one transaction (see WorkItemStatusViewSet._reposition).
+    updateStatus: (projectId, id, fields) => request(`/api/projects/${projectId}/statuses/${id}/`, { method: 'PATCH', body: fields }),
+    deleteStatus: (projectId, id) => request(`/api/projects/${projectId}/statuses/${id}/`, { method: 'DELETE' }),
 
     /* Work items -------------------------------------------------------- */
     getWorkItem:    (id)         => request(`/api/work-items/${id}/`),
