@@ -53,7 +53,14 @@ def test_duplicate_field_name_is_rejected_case_insensitively(auth_client, projec
         "/api/fields/", {"name": "story points", "field_type": "number"}, content_type="application/json"
     )
     assert response.status_code == 400
-    assert "name" in response.json()
+    # `CustomFieldSerializer.validate_name` is the hand-written,
+    # case-insensitive duplicate check — it must be the one that actually
+    # runs. `name` is `unique=True` on the model, so DRF auto-attaches a
+    # `UniqueValidator` that runs first unless the serializer disables it;
+    # left unchecked, that validator's own generic message ("custom field
+    # with this name already exists.") wins instead and this hand-written
+    # wording never executes.
+    assert response.json() == {"name": ['"story points" already exists.']}
 
 
 @pytest.mark.django_db

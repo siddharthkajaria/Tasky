@@ -382,7 +382,11 @@ async function viewFields() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  // is_staff isn't reliably present on /api/auth/me/ today — this OR is
+  // dormant until that's fixed, but keeps canManageDefinitions here honestly
+  // matching design/js/logic.js's signed-off contract for Fields, Screens
+  // and Labels alike.
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (canManage) {
     form.hidden = false;
@@ -467,8 +471,11 @@ function fieldRow(field, list, canManage) {
       if (!value || value === field.name) { nameEl.textContent = field.name; return; }
       try {
         await data.renameField(field.id, value);
-        field.name = value;
         toast('Field renamed');
+        // CustomField.Meta.ordering is ["name"] server-side, so a rename can
+        // change this field's place in the list — repaint the whole thing
+        // rather than patch this row's node in place.
+        await paintFields(list, canManage);
       } catch (err) {
         nameEl.textContent = field.name;
         handle(err);
@@ -484,6 +491,7 @@ function fieldRow(field, list, canManage) {
   const deleteBtn = li.querySelector('[data-delete]');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete field "${field.name}"? This can't be undone.`)) return;
       try {
         await data.deleteField(field.id);
         toast(`"${field.name}" deleted`);
@@ -495,9 +503,13 @@ function fieldRow(field, list, canManage) {
   return li;
 }
 
-/* Field options — an ordered list, edited in place. Reordering swaps an
-   adjacent pair's `position` via two sequential PATCH calls, same pattern
-   as Phase 1's status reorder. */
+/* Field options — an ordered list, edited in place. Reordering sends the
+   target INDEX in a single PATCH — `FieldOptionViewSet._reposition` clamps
+   it and renumbers the whole sibling list server-side in one transaction.
+   Two sequential PATCHes (one per swapped option) would race against that
+   renumbering: the second call's target position is computed from
+   already-stale sibling data, which can land the list in the wrong final
+   order. */
 async function openFieldOptionsModal(fieldId, canManage, onChange) {
   let field;
   try { field = await data.getField(fieldId); } catch (err) { return handle(err); }
@@ -559,15 +571,16 @@ async function openFieldOptionsModal(fieldId, canManage, onChange) {
     };
 
     const up = li.querySelector('[data-up]');
-    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i - 1].position })
-      .then(() => data.moveFieldOption(field.id, field.options[i - 1].id, { position: option.position }))
+    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i - 1 })
       .then(() => data.getField(field.id))));
     const down = li.querySelector('[data-down]');
-    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i + 1].position })
-      .then(() => data.moveFieldOption(field.id, field.options[i + 1].id, { position: option.position }))
+    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i + 1 })
       .then(() => data.getField(field.id))));
     const remove = li.querySelector('[data-remove]');
-    if (remove) remove.addEventListener('click', () => run(() => data.deleteFieldOption(field.id, option.id)));
+    if (remove) remove.addEventListener('click', () => {
+      if (!confirm(`Delete option "${option.label}"? This can't be undone.`)) return;
+      run(() => data.deleteFieldOption(field.id, option.id));
+    });
 
     const labelEl = li.querySelector('[data-rename]');
     if (labelEl) {
@@ -626,7 +639,7 @@ async function viewScreens() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (canManage) {
     form.hidden = false;
@@ -1241,21 +1254,22 @@ function statusRow(status, i, all, main, project) {
 
   const refresh = () => renderStatuses(main, project);
 
+  // A single PATCH carrying the target INDEX — WorkItemStatusViewSet._reposition
+  // clamps it and renumbers every sibling status server-side in one
+  // transaction. Two sequential PATCHes (one per swapped status) would race
+  // against that renumbering, since the second call's target position is
+  // computed from already-stale sibling data.
   const up = li.querySelector('[data-up]');
   if (up) up.addEventListener('click', async () => {
-    const other = all[i - 1];
     try {
-      await data.updateStatus(project.id, status.id, { position: other.position });
-      await data.updateStatus(project.id, other.id, { position: status.position });
+      await data.updateStatus(project.id, status.id, { position: i - 1 });
       await refresh();
     } catch (err) { handle(err); }
   });
   const down = li.querySelector('[data-down]');
   if (down) down.addEventListener('click', async () => {
-    const other = all[i + 1];
     try {
-      await data.updateStatus(project.id, status.id, { position: other.position });
-      await data.updateStatus(project.id, other.id, { position: status.position });
+      await data.updateStatus(project.id, status.id, { position: i + 1 });
       await refresh();
     } catch (err) { handle(err); }
   });
@@ -3548,10 +3562,6 @@ function taskRow(item) {
 
 /* Labels admin (sub-project 4) ------------------------------------------ */
 
-function isOwnerOfAnyProject(projects) {
-  return (projects || []).some(p => p.my_role === 'owner');
-}
-
 async function viewLabels() {
   const main = outlet();
   main.replaceChildren(tpl('tpl-labels'));
@@ -3562,7 +3572,7 @@ async function viewLabels() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (!canManage) {
     locked.hidden = false;
