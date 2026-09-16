@@ -1808,20 +1808,36 @@ async function viewSearch() {
   });
 }
 
-function searchResultRow(item) {
-  const li = document.createElement('li');
-  li.className = 'search-result-row';
+// Shared between the Search screen's result rows and the work-item Link
+// picker's type-ahead results (openLinkModal, below) — both show the same
+// key/type/title shape. They differ only in what wraps it (a real navigation
+// link on Search; a click-to-pick link on the picker, styled identically —
+// see the `<a href="#" data-open-item>` precedent in loadChildren for the
+// same non-navigating-anchor trick) and in how the row disambiguates: Search
+// already has the project's key next to whatever status filter is active,
+// while the picker's whole point is telling same-titled items in different
+// projects apart, so it shows the board name instead.
+function searchResultContent(item, opts) {
+  const showBoard = opts && opts.showBoard;
   const who = item.assignee_detail
     ? `<span class="who-chip">${esc(item.assignee_detail.display_name || item.assignee_detail.username)}</span>`
     : '';
-  li.innerHTML =
-    `<a href="#/projects/${item.project.id}/boards/${item.board.id}">` +
-      `<span class="key-pill">${esc(item.key)}</span>` +
-      `<span class="type-badge type-${esc(item.item_type)}">${esc(Logic.ITEM_TYPE_LABEL[item.item_type])}</span>` +
-      `<span class="search-title">${esc(item.title)}</span>` +
-      `<span class="search-meta">${esc(item.project.key)} · ${item.status_detail ? esc(item.status_detail.name) : ''}</span>` +
-      who +
-    `</a>`;
+  const meta = showBoard
+    ? `${esc(item.project.key)} · ${esc(item.board.name)}`
+    : `${esc(item.project.key)} · ${item.status_detail ? esc(item.status_detail.name) : ''}`;
+  return (
+    `<span class="key-pill">${esc(item.key)}</span>` +
+    `<span class="type-badge type-${esc(item.item_type)}">${esc(Logic.ITEM_TYPE_LABEL[item.item_type])}</span>` +
+    `<span class="search-title">${esc(item.title)}</span>` +
+    `<span class="search-meta">${meta}</span>` +
+    who
+  );
+}
+
+function searchResultRow(item) {
+  const li = document.createElement('li');
+  li.className = 'search-result-row';
+  li.innerHTML = `<a href="#/projects/${item.project.id}/boards/${item.board.id}">${searchResultContent(item)}</a>`;
   return li;
 }
 
@@ -3285,49 +3301,118 @@ async function loadLinks(item, ctx) {
   }
 }
 
-/* The link picker opens on top of the work item modal — hence the modal
-   stack, so Escape closes only this one. */
-async function openLinkModal(item, ctx) {
-  const linked = new Set((ctx.links || []).map(l => l.item_detail && l.item_detail.id));
-  /* Filter out everything the API would reject anyway: itself, an existing
-     link, and its own parent or children. */
-  const candidates = boardItems().filter(i =>
-    i.id !== item.id &&
-    !linked.has(i.id) &&
-    Number(item.parent) !== i.id &&
-    Number(i.parent) !== item.id
-  );
+const LINK_SEARCH_DEBOUNCE_MS = 300;
 
+/* The link picker opens on top of the work item modal — hence the modal
+   stack, so Escape closes only this one.
+
+   This used to build its candidate list from `boardItems()` — whatever was
+   already loaded for the current board. The backend has never actually
+   confined links to one board: `WorkItemLinkViewSet` only requires the
+   caller be a member of BOTH items' projects (see docs/api.md, Work Item
+   Links). So the picker now searches across every project the caller is a
+   member of, via the same `/api/search/` endpoint the Search screen uses
+   (`data.search`) — a type-ahead instead of a `<select>`, since results
+   arrive asynchronously. */
+async function openLinkModal(item, ctx) {
   const head = modalHead(`Link ${esc(item.key)}`);
-  const body = !candidates.length
-    ? head + `<p class="empty">Nothing else on this board is available to link to.</p>`
-    : head +
-      `<label class="field"><span>Item</span><select name="target">${
-        candidates.map(c => `<option value="${c.id}">${esc(c.key)} — ${esc(c.title)}</option>`).join('')
-      }</select></label>` +
-      `<p class="form-error" data-error hidden></p>` +
-      `<div class="modal-actions"><button class="btn btn-primary" type="button" data-send>Link</button>` +
-      `<button class="btn" type="button" data-close>Cancel</button></div>`;
+  const body = head +
+    `<label class="field"><span>Item</span>` +
+    `<input type="text" data-link-search placeholder="Search by title or key…" autocomplete="off"></label>` +
+    `<ul class="search-results" data-link-results></ul>` +
+    `<p class="form-error" data-error hidden></p>` +
+    `<div class="modal-actions"><button class="btn" type="button" data-close>Cancel</button></div>`;
 
   const { modal, close } = openModal(body);
-  const sendBtn = modal.querySelector('[data-send]');
-  if (!sendBtn) return;
+  const input = modal.querySelector('[data-link-search]');
+  const resultsEl = modal.querySelector('[data-link-results]');
+  const errorEl = modal.querySelector('[data-error]');
+  if (!input || !resultsEl) return;
 
-  sendBtn.addEventListener('click', async () => {
-    const errorEl = modal.querySelector('[data-error]');
-    errorEl.hidden = true;
-    sendBtn.disabled = true;
-    try {
-      await data.createLink(item.id, Number(modal.querySelector('[name=target]').value));
-      close();
-      toast('Linked');
-      loadLinks(item, ctx);
-    } catch (err) {
-      if (err && err.sessionExpired) { close(); return handle(err); }
-      errorEl.textContent = errorText(err);
-      errorEl.hidden = false;
-      sendBtn.disabled = false;
+  /* Everything the API would reject anyway: itself, an existing link, and
+     its own parent or children. The old board-scoped candidate list came
+     from full work-item objects (which carry `parent`), so it could spot a
+     child by checking `i.parent === item.id` directly. `SearchResultSerializer`
+     doesn't include `parent` at all — so instead of silently dropping that
+     half of the rule, fetch this item's children the same way the Children
+     panel does and exclude by id. */
+  const linkedIds = new Set((ctx.links || []).map(l => l.item_detail && l.item_detail.id));
+  let childIds = new Set();
+  try {
+    childIds = new Set((await data.listChildren(item.id)).map(c => c.id));
+  } catch { /* best-effort — a stale exclusion list just surfaces the API's own 400 on submit */ }
+
+  const isExcluded = (candidate) =>
+    candidate.id === item.id ||
+    linkedIds.has(candidate.id) ||
+    Number(item.parent) === candidate.id ||
+    childIds.has(candidate.id);
+
+  function renderHint(text) {
+    resultsEl.innerHTML = `<li class="empty-inline">${esc(text)}</li>`;
+  }
+
+  function pick(candidate) {
+    return async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      try {
+        await data.createLink(item.id, candidate.id);
+        close();
+        toast('Linked');
+        loadLinks(item, ctx);
+      } catch (err) {
+        if (err && err.sessionExpired) { close(); return handle(err); }
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+      }
+    };
+  }
+
+  function linkPickerRow(candidate) {
+    const li = document.createElement('li');
+    li.className = 'search-result-row';
+    li.innerHTML = `<a href="#" data-pick>${searchResultContent(candidate, { showBoard: true })}</a>`;
+    li.querySelector('[data-pick]').addEventListener('click', pick(candidate));
+    return li;
+  }
+
+  renderHint('Type at least 2 characters to search.');
+
+  // Debounced, and guarded against two overlapping searches resolving out of
+  // order: `searchSeq` mirrors the `bulkBarSeq` guard in renderBulkBar —
+  // whichever request was started LAST wins the render, even if an earlier
+  // one's response arrives after it. `document.body.contains(modal)` covers
+  // the other risk: the modal can close (Escape, backdrop, Cancel, a
+  // successful pick) while a debounce timer or an in-flight search is still
+  // pending, and none of those close paths run code of ours — so every place
+  // that would otherwise write into `resultsEl` checks the modal is still in
+  // the document first, rather than touching a removed node.
+  let debounceTimer = null;
+  let searchSeq = 0;
+
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const value = input.value.trim();
+    if (value.length < 2) {
+      renderHint('Type at least 2 characters to search.');
+      return;
     }
+    debounceTimer = setTimeout(() => {
+      if (!document.body.contains(modal)) return;
+      const mySeq = ++searchSeq;
+      renderHint('Searching…');
+      data.search({ q: value }).then(({ results }) => {
+        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        const candidates = results.filter(r => !isExcluded(r));
+        if (!candidates.length) { renderHint('No matching items found.'); return; }
+        resultsEl.replaceChildren(...candidates.map(linkPickerRow));
+      }).catch((err) => {
+        if (mySeq !== searchSeq || !document.body.contains(modal)) return;
+        if (err && err.sessionExpired) { close(); return handle(err); }
+        renderHint(errorText(err));
+      });
+    }, LINK_SEARCH_DEBOUNCE_MS);
   });
 }
 
