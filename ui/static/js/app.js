@@ -968,8 +968,28 @@ const nameEl = main.querySelector('[data-board-name]');
     });
     main.querySelector('[data-board-project]').textContent = project.key;
     main.querySelector('[data-back-link]').textContent = project.name;
-    const desc = main.querySelector('[data-board-desc]');
-    if (board.description) desc.textContent = board.description; else desc.remove();
+    const descEl = main.querySelector('[data-board-desc]');
+    descEl.textContent = board.description || '';
+    descEl.dataset.placeholder = 'Add a description…';
+    descEl.contentEditable = 'true';
+    descEl.setAttribute('role', 'textbox');
+    descEl.setAttribute('aria-label', 'Board description');
+    descEl.addEventListener('blur', async () => {
+      const value = descEl.textContent.trim();
+      if (value === (board.description || '')) { descEl.textContent = board.description || ''; return; }
+      try {
+        const updated = await data.updateBoard(board.id, { description: value });
+        board.description = updated.description;
+        toast('Description updated');
+      } catch (err) {
+        descEl.textContent = board.description || '';
+        handle(err);
+      }
+    });
+    descEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); descEl.blur(); }
+      if (e.key === 'Escape') { descEl.textContent = board.description || ''; descEl.blur(); }
+    });
 
     /* Cached for the work item modal's component checklist — the whole board
        shares one project, so this is fetched once per board visit. */

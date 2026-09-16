@@ -235,6 +235,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .board-head [contenteditable] { border-radius: 2px; padding: 1px 4px; margin: -1px -4px; cursor: text; }
 .board-head [contenteditable]:hover,
 .board-head [contenteditable]:focus { background: var(--sunk); outline: none; }
+.board-head [data-board-desc]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--ink-3);
+}
 .back {
   display: inline-block;
   font-family: var(--mono);
