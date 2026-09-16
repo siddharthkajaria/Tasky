@@ -101,6 +101,14 @@ const Logic = (() => {
     return actingRole === 'owner' || actingRole === 'admin';
   }
 
+  /* ---- Backlog & Sprints (sub-project 6) -----------------------------------
+     Starting/completing/deleting a sprint is Owner/Admin, same tier as
+     Statuses/Components/Releases — scheduling a work item into or out of a
+     sprint is a plain edit any project member can already do, no separate
+     check (docs/api.md: "no separate permission check beyond ordinary
+     work-item edit permission"). */
+  const canManageSprints = (role) => role === 'owner' || role === 'admin';
+
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
   function isIsoDate(value) {
     const s = String(value);
@@ -372,6 +380,7 @@ const Logic = (() => {
     canManageDefinitions, canManageScreenAssignments,
     RELEASE_STATUSES, RELEASE_STATUS_LABEL, canManageReleases,
     canDeleteAttachment,
+    canManageSprints,
     isIsoDate, isBlankValue, fieldValueError, screenValueErrors,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
