@@ -1411,6 +1411,68 @@ function releaseItemRow(item, projectId) {
   return li;
 }
 
+/* Attachments (sub-project 8) --------------------------------------------- */
+
+function fileExtBadge(filename) {
+  const dot = String(filename).lastIndexOf('.');
+  return dot === -1 ? 'FILE' : filename.slice(dot + 1).toUpperCase().slice(0, 4);
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function loadAttachments(item, modal, myRoleHere) {
+  const list = modal.querySelector('[data-attachments]');
+  if (!list) return;
+  try {
+    const rows = await data.listAttachments(item.id);
+    if (!rows.length) {
+      list.innerHTML = '<li class="empty-inline">No attachments yet.</li>';
+      return;
+    }
+    list.replaceChildren(...rows.map(a => attachmentRow(a, item, modal, myRoleHere)));
+  } catch (err) {
+    list.innerHTML = '';
+    errorState(list, err, () => loadAttachments(item, modal, myRoleHere));
+  }
+}
+
+function attachmentRow(a, item, modal, myRoleHere) {
+  const li = document.createElement('li');
+  li.className = 'attachment-row';
+  // AttachmentSerializer nests the uploader under `uploaded_by` (a full
+  // user object, or null once that account is gone) — unlike most other
+  // relations in this API it has no `_detail` suffix, matching Comment's
+  // `author`. Both `ui/static/js/store.js` and `design/js/store.js` are
+  // kept in lockstep with that key.
+  const uploader = a.uploaded_by
+    ? esc(a.uploaded_by.display_name || a.uploaded_by.username)
+    : 'Deleted user';
+  const canDelete = Logic.canDeleteAttachment(a.uploaded_by ? a.uploaded_by.id : null, me.id, myRoleHere);
+
+  li.innerHTML =
+    `<span class="attachment-ext">${esc(fileExtBadge(a.filename))}</span>` +
+    `<span class="attachment-name">${esc(a.filename)}</span>` +
+    `<span class="attachment-meta">${esc(formatBytes(a.size))} · ${uploader} · ${esc(String(a.uploaded_at).slice(0, 10))}</span>` +
+    `<a class="btn btn-quiet" href="${esc(data.downloadUrl(a.id))}" download="${esc(a.filename)}">Download</a>` +
+    (canDelete ? `<button class="btn btn-danger" type="button" data-delete-attachment>Delete</button>` : '');
+
+  const delBtn = li.querySelector('[data-delete-attachment]');
+  if (delBtn) {
+    delBtn.addEventListener('click', async () => {
+      try {
+        await data.deleteAttachment(a.id);
+        toast('Attachment deleted');
+        loadAttachments(item, modal, myRoleHere);
+      } catch (err) { handle(err); }
+    });
+  }
+  return li;
+}
+
 /* Custom field controls on a work item form ------------------------------
    One renderer, used by both the inline "add work item" form and the
    detail modal, so a field looks and behaves the same wherever it is
@@ -2223,6 +2285,16 @@ async function openWorkItemModal(itemId) {
         `<input name="body" placeholder="Add a comment" aria-label="Comment">` +
         `<button class="btn" type="submit">Post</button>` +
       `</form>` +
+    `</div>` +
+
+    `<div class="block">` +
+      `<h2>Attachments</h2>` +
+      `<ul class="attachment-list" data-attachments><li class="loading">Loading…</li></ul>` +
+      `<form class="attachment-form" data-attachment-form>` +
+        `<input type="file" name="file" data-attachment-file aria-label="Choose a file to upload">` +
+        `<button class="btn" type="submit">Upload</button>` +
+      `</form>` +
+      `<p class="form-error" data-attachment-error hidden></p>` +
     `</div>`;
 
   const { modal, close } = openModal(body, { wide: true });
@@ -2314,6 +2386,43 @@ async function openWorkItemModal(itemId) {
       input.value = '';
       loadComments(item.id, modal);
     } catch (err) { handle(err); }
+  });
+
+  // Delete permission is per-attachment (uploader OR Owner/Admin), not a
+  // single section-wide flag — needs "my role on this item's project",
+  // which `members` (already fetched for the custom-field user_picker,
+  // Task 5.6) already carries with no second network call.
+  const myMembership = members.find(m => m.user_detail && m.user_detail.id === me.id);
+  const myRoleHere = myMembership ? myMembership.role : null;
+
+  loadAttachments(item, modal, myRoleHere);
+
+  const attachmentForm = modal.querySelector('[data-attachment-form]');
+  attachmentForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = modal.querySelector('[data-attachment-file]');
+    const attachmentError = modal.querySelector('[data-attachment-error]');
+    attachmentError.hidden = true;
+    const file = fileInput.files[0];
+    if (!file) {
+      attachmentError.textContent = 'Choose a file first.';
+      attachmentError.hidden = false;
+      return;
+    }
+    const submitBtn = attachmentForm.querySelector('button');
+    submitBtn.disabled = true;
+    try {
+      await data.uploadAttachment(item.id, file);
+      attachmentForm.reset();
+      toast('Uploaded');
+      loadAttachments(item, modal, myRoleHere);
+    } catch (err) {
+      if (err && err.sessionExpired) { close(); return handle(err); }
+      attachmentError.textContent = errorText(err);
+      attachmentError.hidden = false;
+    } finally {
+      submitBtn.disabled = false;
+    }
   });
 }
 

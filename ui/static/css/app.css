@@ -1272,3 +1272,32 @@ button, input, textarea, select { font: inherit; color: inherit; }
   padding: 1px 7px;
 }
 .release-chip-sm.state-released { background: var(--accent-w); color: var(--accent); }
+
+/* Attachments (sub-project 8) --------------------------------------------- */
+
+.attachment-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--sunk);
+  border-radius: var(--r);
+  padding: 7px 10px;
+  font-size: 12.5px;
+}
+.attachment-ext {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  color: var(--ink-3);
+  border: 1px solid var(--rule-2);
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+.attachment-name { font-weight: 500; }
+.attachment-meta { margin-left: auto; color: var(--ink-3); font-size: 11px; white-space: nowrap; }
+.attachment-row .btn-quiet, .attachment-row .btn-danger { padding: 2px 8px; font-size: 11px; }
+
+.attachment-form { display: flex; gap: 8px; align-items: center; }
+.attachment-form input[type=file] { flex: 1; font-size: 12px; color: var(--ink-2); }
