@@ -941,7 +941,31 @@ async function viewBoard(projectId, boardId) {
       data.listStatuses(projectId),
     ]);
 
-    main.querySelector('[data-board-name]').textContent = board.name;
+const nameEl = main.querySelector('[data-board-name]');
+    nameEl.textContent = board.name;
+    // Any project member may rename a board — BoardViewSet has no
+    // can_manage_* role gate, unlike Components/Statuses (verified against
+    // boards/views.py and boards/tests/test_board_api.py). Reaching this
+    // page at all already proves membership, so no extra permission check.
+    nameEl.contentEditable = 'true';
+    nameEl.setAttribute('role', 'textbox');
+    nameEl.setAttribute('aria-label', 'Board name');
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === board.name) { nameEl.textContent = board.name; return; }
+      try {
+        const updated = await data.updateBoard(board.id, { name: value });
+        board.name = updated.name;
+        toast('Board renamed');
+      } catch (err) {
+        nameEl.textContent = board.name;
+        handle(err);
+      }
+    });
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      if (e.key === 'Escape') { nameEl.textContent = board.name; nameEl.blur(); }
+    });
     main.querySelector('[data-board-project]').textContent = project.key;
     main.querySelector('[data-back-link]').textContent = project.name;
     const desc = main.querySelector('[data-board-desc]');

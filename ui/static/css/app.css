@@ -232,6 +232,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
   gap: 20px;
   margin-bottom: 16px;
 }
+.board-head [contenteditable] { border-radius: 2px; padding: 1px 4px; margin: -1px -4px; cursor: text; }
+.board-head [contenteditable]:hover,
+.board-head [contenteditable]:focus { background: var(--sunk); outline: none; }
 .back {
   display: inline-block;
   font-family: var(--mono);
