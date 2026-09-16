@@ -1357,6 +1357,7 @@ async function releaseCard(release, main, project, canManage) {
       if (!value || value === release.name) { nameEl.textContent = release.name; return; }
       try {
         await data.updateRelease(project.id, release.id, { name: value });
+        release.name = value;
         toast('Release renamed');
       } catch (err) {
         nameEl.textContent = release.name;
@@ -1377,10 +1378,14 @@ async function releaseCard(release, main, project, canManage) {
   return card;
 }
 
-/* Reached from the project page, not a board — boardState isn't already
-   pointed at this item's board, so it's set explicitly before opening the
-   modal (which reads boardState.projectId/boardId to load components,
-   members and sibling items for the parent picker). */
+/* Reached from the project page, not a board — boardState is stale or
+   unset for this project/board, and openWorkItemModal's Components
+   checklist and Parent picker both read boardState.components/buckets
+   rather than fetching their own copy (viewBoard populates those once per
+   board visit and every other caller relies on that). So this handler has
+   to do the same population viewBoard does before opening the modal, or
+   the save handler silently PATCHes an empty components list and a null
+   parent over whatever the item actually had. */
 function releaseItemRow(item, projectId) {
   const li = document.createElement('li');
   li.className = 'release-item-row';
@@ -1395,7 +1400,12 @@ function releaseItemRow(item, projectId) {
     e.preventDefault();
     boardState.projectId = projectId;
     boardState.boardId = item.board;
-    try { boardState.statuses = await data.listStatuses(projectId); } catch { /* modal shows what it can */ }
+    try { boardState.statuses = await data.listStatuses(projectId); } catch { boardState.statuses = []; }
+    try { boardState.components = await data.listComponents(projectId); } catch { boardState.components = []; }
+    try {
+      const boardItemsList = await data.getBoardWorkItems(item.board);
+      boardState.buckets = Logic.groupByStatus(boardItemsList, boardState.statuses);
+    } catch { boardState.buckets = null; }
     openWorkItemModal(item.id);
   });
   return li;
