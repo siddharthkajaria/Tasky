@@ -149,9 +149,14 @@ const Store = (() => {
   let attachments = [];
   let nextAttachmentId = 10000;
   const attachmentById = (aid) => attachments.find(a => a.id === Number(aid)) || null;
+  // AttachmentSerializer nests the uploader under `uploaded_by` itself (a
+  // full user object, or null once that account is gone) — unlike most
+  // other relations here it has no `_detail` suffix, matching Comment's
+  // `author`. Must stay `uploaded_by`, not `uploaded_by_detail`, so this
+  // mock's shape matches the real API's.
   const attachmentOut = (a) => ({
     id: a.id, work_item: a.work_item, filename: a.filename, size: a.size,
-    uploaded_by_detail: a.uploaded_by ? userById(a.uploaded_by) : null,
+    uploaded_by: a.uploaded_by ? userById(a.uploaded_by) : null,
     uploaded_at: a.uploaded_at,
   });
 
