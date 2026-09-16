@@ -337,7 +337,16 @@ async function viewFields() {
 
   let projects;
   try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
-  const canManage = isOwnerOfAnyProject(projects);
+  // Global: Owner of ANY project (CustomField has no `project` field at
+  // all), or a Site Admin. Mirrors user_can_manage_definitions exactly
+  // (boards/serializers.py:81-86).
+  //
+  // Known gap (see the plan's Global Constraints): /api/auth/me/ doesn't
+  // expose is_staff today, so `me.is_staff` is always undefined against the
+  // real backend — a Site Admin who owns no project won't see these
+  // controls here yet. Not fixed here; that's a backend serializer change,
+  // outside this front-end-only plan's scope.
+  const canManage = Logic.canManageDefinitions(projects.map(p => p.my_role), me && me.is_staff);
 
   if (canManage) {
     form.hidden = false;
@@ -424,6 +433,10 @@ function fieldRow(field, list, canManage) {
         await data.renameField(field.id, value);
         field.name = value;
         toast('Field renamed');
+        // The list is alphabetical (CustomField.Meta.ordering = ["name"]) —
+        // a rename can change this row's position, so repaint the whole
+        // list rather than only patching this node's text in place.
+        await paintFields(list, canManage);
       } catch (err) {
         nameEl.textContent = field.name;
         handle(err);
@@ -513,14 +526,15 @@ async function openFieldOptionsModal(fieldId, canManage, onChange) {
       } catch (err) { showError(err); }
     };
 
+    // A single PATCH is enough — the server (FieldOptionViewSet._reposition,
+    // boards/views.py:1294-1305) clamps the target index and renumbers
+    // every sibling in one transaction, proven by test_reordering_options.
+    // No swap-via-two-PATCH, matching the Work Item Statuses reorder
+    // convention already used elsewhere in this codebase.
     const up = li.querySelector('[data-up]');
-    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i - 1].position })
-      .then(() => data.moveFieldOption(field.id, field.options[i - 1].id, { position: option.position }))
-      .then(() => data.getField(field.id))));
+    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i - 1 })));
     const down = li.querySelector('[data-down]');
-    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i + 1].position })
-      .then(() => data.moveFieldOption(field.id, field.options[i + 1].id, { position: option.position }))
-      .then(() => data.getField(field.id))));
+    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i + 1 })));
     const remove = li.querySelector('[data-remove]');
     if (remove) remove.addEventListener('click', () => run(() => data.deleteFieldOption(field.id, option.id)));
 
