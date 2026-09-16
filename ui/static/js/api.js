@@ -110,6 +110,41 @@ const Api = (() => {
     renameComponent:  (projectId, id, name)   => request(`/api/projects/${projectId}/components/${id}/`, { method: 'PATCH', body: { name } }),
     deleteComponent:  (projectId, id)         => request(`/api/projects/${projectId}/components/${id}/`, { method: 'DELETE' }),
 
+    /* Custom fields (sub-project 2b). Global — not scoped to any project.
+       `listFields`/`getField` are readable by any authenticated user; the
+       mutating calls 403 unless the caller is an Owner of some project (or
+       a Site Admin) — see Logic.canManageDefinitions. Screens are a
+       separate, out-of-scope concern (docs/api.md's Screens section). */
+    listFields:  ()          => request('/api/fields/'),
+    getField:    (id)        => request(`/api/fields/${id}/`),
+    createField: (fields)    => request('/api/fields/', { method: 'POST', body: fields }),
+    // `field_type` is immutable after creation (400 if you try to change
+    // it — boards/views.py:1212-1216), so this only ever sends `{name}`.
+    // There is deliberately no `changeFieldType`.
+    renameField: (id, name)  => request(`/api/fields/${id}/`, { method: 'PATCH', body: { name } }),
+    deleteField: (id)        => request(`/api/fields/${id}/`, { method: 'DELETE' }),
+
+    /* Field options. The option endpoints only ever return the one option,
+       never the parent field, so each mutator re-fetches the field
+       afterward — every caller gets back the same shape `getField` does,
+       with `options` freshly sorted by position. */
+    addFieldOption: (fieldId, label) =>
+      request(`/api/fields/${fieldId}/options/`, { method: 'POST', body: { label } })
+        .then(() => request(`/api/fields/${fieldId}/`)),
+    renameFieldOption: (fieldId, optionId, label) =>
+      request(`/api/fields/${fieldId}/options/${optionId}/`, { method: 'PATCH', body: { label } })
+        .then(() => request(`/api/fields/${fieldId}/`)),
+    // `fields` is `{position}` — one PATCH is enough. The server clamps and
+    // renumbers every sibling in a transaction
+    // (FieldOptionViewSet._reposition, boards/views.py:1294-1305), same
+    // pattern as the work item statuses reorder.
+    moveFieldOption: (fieldId, optionId, fields) =>
+      request(`/api/fields/${fieldId}/options/${optionId}/`, { method: 'PATCH', body: fields })
+        .then(() => request(`/api/fields/${fieldId}/`)),
+    deleteFieldOption: (fieldId, optionId) =>
+      request(`/api/fields/${fieldId}/options/${optionId}/`, { method: 'DELETE' })
+        .then(() => request(`/api/fields/${fieldId}/`)),
+
     /* "Relates to" links. The list is symmetric: each row carries
        `item_detail`, already resolved to the other side by the server. */
     listLinks:  (itemId)          => request(`/api/work-items/${itemId}/links/`),
