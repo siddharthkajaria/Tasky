@@ -16,9 +16,12 @@ const Store = (() => {
   // Deliberately the same people the real `seed_demo` command creates, so the
   // mock and a seeded local database do not contradict each other.
   const users = [
-    { id: 1, username: 'asha',  display_name: 'Asha Rao' },
-    { id: 2, username: 'kabir', display_name: 'Kabir Menon' },
-    { id: 3, username: 'lena',  display_name: 'Lena Fischer' },
+    // `is_staff` matches boards/management/commands/seed_demo.py — none of
+    // the three demo accounts is a Site Admin, exactly like the real
+    // backend's seed. See canManageDefinitions() below.
+    { id: 1, username: 'asha',  display_name: 'Asha Rao',    is_staff: false },
+    { id: 2, username: 'kabir', display_name: 'Kabir Menon', is_staff: false },
+    { id: 3, username: 'lena',  display_name: 'Lena Fischer', is_staff: false },
   ];
   const userById = (uid) => users.find(u => u.id === Number(uid)) || null;
 
@@ -71,6 +74,52 @@ const Store = (() => {
     { id: 21, project: 1, name: 'Backend' },
     { id: 22, project: 1, name: 'Frontend' },
   ];
+
+  /* Custom fields (sub-project 2b). Global — no `project` key at all,
+     unlike components/statuses. One of every type, so a reviewer sees each
+     renderer without creating anything first; "Customer reference" is
+     deliberately on no screen and used by no work item, so it's the one a
+     reviewer can delete straight away. */
+  let customFields = [
+    { id: 31, name: 'Severity',            field_type: 'select',      created_by: 1, created_at: now() },
+    { id: 32, name: 'Environment',         field_type: 'text_short',  created_by: 1, created_at: now() },
+    { id: 33, name: 'Steps to reproduce',  field_type: 'text_long',   created_by: 1, created_at: now() },
+    { id: 34, name: 'Affected platforms',  field_type: 'multiselect', created_by: 1, created_at: now() },
+    { id: 35, name: 'Story Points',        field_type: 'number',      created_by: 1, created_at: now() },
+    { id: 36, name: 'Target release',      field_type: 'date',        created_by: 1, created_at: now() },
+    { id: 37, name: 'Needs QA sign-off',   field_type: 'checkbox',    created_by: 1, created_at: now() },
+    { id: 38, name: 'Reviewer',            field_type: 'user_picker', created_by: 1, created_at: now() },
+    { id: 39, name: 'Customer reference',  field_type: 'text_short',  created_by: 1, created_at: now() },
+  ];
+  let fieldOptions = [
+    { id: 41, field: 31, label: 'Blocker',  position: 0 },
+    { id: 42, field: 31, label: 'Major',    position: 1 },
+    { id: 43, field: 31, label: 'Minor',    position: 2 },
+    { id: 44, field: 31, label: 'Cosmetic', position: 3 },
+    { id: 45, field: 34, label: 'Web',      position: 0 },
+    { id: 46, field: 34, label: 'iOS',      position: 1 },
+    { id: 47, field: 34, label: 'Android',  position: 2 },
+    { id: 48, field: 34, label: 'Desktop',  position: 3 },
+  ];
+
+  const optionsForField = (fieldId) =>
+    fieldOptions.filter(o => o.field === Number(fieldId)).sort((a, b) => a.position - b.position);
+
+  // Matches the real CustomFieldSerializer shape exactly:
+  // {id, name, field_type, options, created_by, created_at}.
+  const fieldOut = (field) => Object.assign({}, field, {
+    created_by: field.created_by ? userById(field.created_by) : null,
+    options: optionsForField(field.id),
+  });
+
+  // Global, not project-scoped — mirrors user_can_manage_definitions()
+  // (boards/serializers.py:81-86) exactly: Owner of ANY project, or staff.
+  function definitionManagerRole() {
+    const roles = me ? memberships.filter(m => m.user === me.id).map(m => m.role) : [];
+    return Logic.canManageDefinitions(roles, me && me.is_staff);
+  }
+
+  const DEFINITIONS_DENIED = { detail: "Only a project Owner can manage custom fields. You're not an Owner of any project." };
 
   /* Work item statuses (sub-project 3, Workflows). Per-project and
      configurable on the real backend; the mock only needs the fixed
@@ -661,6 +710,131 @@ const Store = (() => {
     return wait(null);
   }
 
+  /* ---- custom fields (sub-project 2b) ----------------------------------
+     Global — every function below is deliberately NOT project-scoped, and
+     list/get need no role check at all (docs/follow-ups.md: "Custom fields
+     and screens are readable by any authenticated user" — a known,
+     accepted gap, not something to close here). */
+
+  const listFields = () => wait(
+    customFields.slice().sort((a, b) => a.name.localeCompare(b.name)).map(fieldOut)
+  );
+
+  function getField(fieldId) {
+    const field = customFields.find(f => f.id === Number(fieldId));
+    if (!field) return fail(404, { detail: 'Not found.' });
+    return wait(fieldOut(field));
+  }
+
+  function createField(fields) {
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    const clean = ((fields && fields.name) || '').trim();
+    if (!clean) return fail(400, { name: 'This field may not be blank.' });
+    if (!Logic.FIELD_TYPES.includes(fields.field_type)) return fail(400, { field_type: 'Pick a field type.' });
+    if (customFields.some(f => f.name.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, { name: `"${clean}" already exists.` });
+    }
+    const field = { id: id(), name: clean, field_type: fields.field_type, created_by: me.id, created_at: now() };
+    customFields.push(field);
+    return wait(fieldOut(field));
+  }
+
+  // field_type is immutable after creation — this UI never attempts to
+  // change it (the real endpoint 400s if you try), so that guard has no
+  // reachable path here and isn't modeled, same discipline as the two
+  // un-modeled delete guards below.
+  function renameField(fieldId, name) {
+    const field = customFields.find(f => f.id === Number(fieldId));
+    if (!field) return fail(404, { detail: 'Not found.' });
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    const clean = (name || '').trim();
+    if (!clean) return fail(400, { name: 'This field may not be blank.' });
+    if (customFields.some(f => f.id !== field.id && f.name.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, { name: `"${clean}" already exists.` });
+    }
+    field.name = clean;
+    return wait(fieldOut(field));
+  }
+
+  // Real guard NOT modeled: rejected while still assigned to a Screen
+  // (CustomFieldViewSet.perform_destroy, boards/views.py:1237-1244).
+  // Screens have no data in this mock at all (out of scope) — nothing to
+  // check the guard against.
+  function deleteField(fieldId) {
+    const field = customFields.find(f => f.id === Number(fieldId));
+    if (!field) return fail(404, { detail: 'Not found.' });
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    customFields = customFields.filter(f => f.id !== field.id);
+    fieldOptions = fieldOptions.filter(o => o.field !== field.id); // mirrors ON DELETE CASCADE
+    return wait(null);
+  }
+
+  /* ---- field options ---- */
+
+  // Real order: FieldOptionViewSet.perform_create checks permission BEFORE
+  // looking the field up (boards/views.py:1260-1274) — unlike the
+  // project-scoped endpoints elsewhere in this file, where existence is
+  // always checked before permission. Mirrored here for the same reason.
+  function addFieldOption(fieldId, label) {
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    const field = customFields.find(f => f.id === Number(fieldId));
+    if (!field) return fail(404, { detail: 'Not found.' });
+    if (!Logic.fieldHasOptions(field.field_type)) {
+      return fail(400, { detail: `Only Select and Multi-select fields have options — "${field.name}" is a ${Logic.FIELD_TYPE_LABEL[field.field_type]}.` });
+    }
+    const clean = (label || '').trim();
+    if (!clean) return fail(400, { label: 'This field may not be blank.' });
+    if (fieldOptions.some(o => o.field === field.id && o.label.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, { label: `"${clean}" is already an option.` });
+    }
+    fieldOptions.push({ id: id(), field: field.id, label: clean, position: optionsForField(field.id).length });
+    return wait(fieldOut(field));
+  }
+
+  function renameFieldOption(fieldId, optionId, label) {
+    const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
+    if (!option) return fail(404, { detail: 'Not found.' });
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    const clean = (label || '').trim();
+    if (!clean) return fail(400, { label: 'This field may not be blank.' });
+    if (fieldOptions.some(o => o.field === option.field && o.id !== option.id && o.label.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, { label: `"${clean}" is already an option.` });
+    }
+    option.label = clean;
+    return wait(fieldOut(customFields.find(f => f.id === option.field)));
+  }
+
+  // Mirrors FieldOptionViewSet._reposition (boards/views.py:1294-1305)
+  // exactly: pull the option out of its field's position-ordered siblings,
+  // clamp the target index to the sibling count, reinsert, then renumber
+  // everyone 0..n-1. One PATCH moves it — no swap-via-two-PATCH.
+  function moveFieldOption(fieldId, optionId, fields) {
+    const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
+    if (!option) return fail(404, { detail: 'Not found.' });
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    const raw = Number(fields.position);
+    if (!Number.isFinite(raw)) return fail(400, { position: 'Must be a whole number.' });
+    const target = Math.max(0, raw);
+    const siblings = optionsForField(option.field).filter(o => o.id !== option.id);
+    const clamped = Math.min(target, siblings.length);
+    siblings.splice(clamped, 0, option);
+    siblings.forEach((o, i) => { o.position = i; });
+    return wait(fieldOut(customFields.find(f => f.id === option.field)));
+  }
+
+  // Real guard NOT modeled: rejected while still chosen on a work item
+  // (WorkItemFieldValue). No UI anywhere yet reads or writes a work item's
+  // custom field values (out of scope) — nothing to check the guard
+  // against, same discipline as deleteField's un-modeled screen guard.
+  function deleteFieldOption(fieldId, optionId) {
+    const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
+    if (!option) return fail(404, { detail: 'Not found.' });
+    if (!definitionManagerRole()) return fail(403, DEFINITIONS_DENIED);
+    fieldOptions = fieldOptions.filter(o => o.id !== option.id);
+    optionsForField(option.field).forEach((o, i) => { o.position = i; });
+    return wait(fieldOut(customFields.find(f => f.id === option.field)));
+  }
+
   /* ---- "relates to" links ---------------------------------------------- */
 
   function listLinks(itemId) {
@@ -770,6 +944,8 @@ const Store = (() => {
     listBoards, getBoard, createBoard, getBoardWorkItems, listStatuses,
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
+    listFields, getField, createField, renameField, deleteField,
+    addFieldOption, renameFieldOption, moveFieldOption, deleteFieldOption,
     listLinks, createLink, deleteLink,
     listComments, createComment, deleteComment,
     listUsers, myTasks,
