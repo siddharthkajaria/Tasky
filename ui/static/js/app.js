@@ -196,6 +196,8 @@ async function route() {
 
   if (hash === '/my-tasks') { setActiveNav('my-tasks'); return viewMyTasks(); }
 
+  if (hash === '/fields') { setActiveNav('fields'); return viewFields(); }
+
   setActiveNav('projects');
   viewProjects();
 }
