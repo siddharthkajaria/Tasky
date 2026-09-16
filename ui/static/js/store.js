@@ -464,6 +464,92 @@ const Store = (() => {
     return wait(statusesForProject(projectId));
   }
 
+  function createStatus(projectId, fields) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (!Logic.canManageStatuses(role)) {
+      return fail(403, { detail: "You don't have permission to manage this project's statuses." });
+    }
+    const clean = (fields.name || '').trim();
+    if (!clean) return fail(400, { name: 'This field may not be blank.' });
+    if (!Logic.CATEGORIES.includes(fields.category)) return fail(400, { category: 'Pick a category.' });
+    if (statuses.some(s => s.project === Number(projectId) && s.name.toLowerCase() === clean.toLowerCase())) {
+      return fail(400, { name: `"${clean}" already exists.` });
+    }
+    const status = {
+      id: id(), project: Number(projectId), name: clean, category: fields.category,
+      position: statusesForProject(projectId).length,
+    };
+    statuses.push(status);
+    return wait(status);
+  }
+
+  // `position`, when present, reproduces the server's _reposition: pull this
+  // status out of its project's position-ordered siblings, clamp the target
+  // index to the sibling count, reinsert, then renumber everyone 0..n-1.
+  // Same algorithm as boards/views.py's WorkItemStatusViewSet._reposition.
+  function updateStatus(projectId, statusId, fields) {
+    const status = statuses.find(s => s.id === Number(statusId) && s.project === Number(projectId));
+    if (!status) return fail(404, { detail: 'Not found.' });
+    const role = myRole(status.project);
+    if (!role) return denied();
+    if (!Logic.canManageStatuses(role)) {
+      return fail(403, { detail: "You don't have permission to manage this project's statuses." });
+    }
+
+    if (fields.name !== undefined) {
+      const clean = (fields.name || '').trim();
+      if (!clean) return fail(400, { name: 'This field may not be blank.' });
+      if (statuses.some(s => s.project === status.project && s.id !== status.id && s.name.toLowerCase() === clean.toLowerCase())) {
+        return fail(400, { name: `"${clean}" already exists.` });
+      }
+      status.name = clean;
+    }
+
+    if (fields.category !== undefined && fields.category !== status.category) {
+      const remaining = statuses.filter(s => s.project === status.project && s.category === status.category && s.id !== status.id);
+      if (!remaining.length) {
+        return fail(400, { category: `${Logic.CATEGORY_LABELS[status.category]} needs at least one status — recategorize another one first.` });
+      }
+      status.category = fields.category;
+    }
+
+    if (fields.position !== undefined) {
+      const target = Math.max(0, Number(fields.position) || 0);
+      const siblings = statusesForProject(status.project).filter(s => s.id !== status.id);
+      const clamped = Math.min(target, siblings.length);
+      siblings.splice(clamped, 0, status);
+      siblings.forEach((s, i) => { s.position = i; });
+    }
+
+    return wait(status);
+  }
+
+  // Automation-rule-reference guard is intentionally NOT modeled here — this
+  // mock has no automation-rule data at all yet; only the two guards below
+  // are reachable through the current UI.
+  function deleteStatus(projectId, statusId) {
+    const status = statuses.find(s => s.id === Number(statusId) && s.project === Number(projectId));
+    if (!status) return fail(404, { detail: 'Not found.' });
+    const role = myRole(status.project);
+    if (!role) return denied();
+    if (!Logic.canManageStatuses(role)) {
+      return fail(403, { detail: "You don't have permission to manage this project's statuses." });
+    }
+    const inUse = workItems.filter(w => w.status === status.id);
+    if (inUse.length) {
+      return fail(400, { detail: `"${status.name}" is still used by ${inUse.length} work item${inUse.length === 1 ? '' : 's'}. Move ${inUse.length === 1 ? 'it' : 'them'} first.` });
+    }
+    const remaining = statuses.filter(s => s.project === status.project && s.category === status.category && s.id !== status.id);
+    if (!remaining.length) {
+      return fail(400, { detail: `${Logic.CATEGORY_LABELS[status.category]} needs at least one status.` });
+    }
+    statuses = statuses.filter(s => s.id !== status.id);
+    statusesForProject(status.project).forEach((s, i) => { s.position = i; });
+    return wait(null);
+  }
+
   /* ---- work items ------------------------------------------------------ */
 
   function hierarchyError(itemType, parent) {
@@ -768,6 +854,7 @@ const Store = (() => {
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
     listMyInvitations, acceptInvitation, declineInvitation,
     listBoards, getBoard, createBoard, getBoardWorkItems, listStatuses,
+    createStatus, updateStatus, deleteStatus,
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
     listLinks, createLink, deleteLink,
