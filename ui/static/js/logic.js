@@ -32,6 +32,55 @@ const Logic = (() => {
   const canLeave = (actingRole) => actingRole === 'admin' || actingRole === 'member';
   const canManageComponents = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Custom fields (sub-project 2b) -----------------------------------
+     Global — CustomField has no `project` field at all, unlike
+     Components/Statuses, so there is no per-project role check here. */
+
+  // The spec's fixed set. No custom types, and a field's type is immutable
+  // once created, so this list is only ever consulted at creation time.
+  const FIELD_TYPES = [
+    'text_short', 'text_long', 'number', 'date',
+    'select', 'multiselect', 'checkbox', 'user_picker',
+  ];
+  const FIELD_TYPE_LABEL = {
+    text_short: 'Short text',
+    text_long: 'Long text',
+    number: 'Number',
+    date: 'Date',
+    select: 'Select',
+    multiselect: 'Multi-select',
+    checkbox: 'Checkbox',
+    user_picker: 'User picker',
+  };
+  // One line of plain English per type, shown next to the type picker so the
+  // irreversible choice is made with its consequences visible.
+  const FIELD_TYPE_HINT = {
+    text_short: 'A single line of text.',
+    text_long: 'A paragraph — notes, steps to reproduce.',
+    number: 'Any number, whole or decimal.',
+    date: 'A calendar date.',
+    select: 'Pick exactly one from a list you define.',
+    multiselect: 'Pick any number from a list you define.',
+    checkbox: 'A yes / no tick.',
+    user_picker: 'A member of the work item\'s project.',
+  };
+
+  const fieldHasOptions = (fieldType) => fieldType === 'select' || fieldType === 'multiselect';
+
+  // Owner of ANY project (not necessarily one relevant to the screen in
+  // front of you — verified against `user_can_manage_definitions` in
+  // boards/serializers.py:81-86, and against
+  // test_being_owner_of_any_project_is_enough_not_necessarily_a_specific_one),
+  // OR a Site Admin. `roles` is every role this person holds, across every
+  // project they're a member of; `isStaff` is their `is_staff` flag.
+  //
+  // Known gap: the real `/api/auth/me/` does not expose `is_staff` today
+  // (see the plan's Global Constraints), so `isStaff` is always falsy
+  // against the real backend until that's fixed server-side. This predicate
+  // is written correctly regardless, so it starts working the moment that
+  // gap closes.
+  const canManageDefinitions = (roles, isStaff) => !!isStaff || (roles || []).includes('owner');
+
   /* ---- Work item hierarchy --------------------------------------------- */
 
   const ITEM_TYPES = ['epic', 'story', 'task', 'bug', 'subtask'];
@@ -197,6 +246,7 @@ const Logic = (() => {
     ROLE_LABEL,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
+    FIELD_TYPES, FIELD_TYPE_LABEL, FIELD_TYPE_HINT, fieldHasOptions, canManageDefinitions,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
     requiresParent, canHaveParent, isValidParent, parentCandidates,
     groupByStatus, findItem, applyMove, removeItem, moveWorkItem,
