@@ -279,6 +279,16 @@ const Store = (() => {
     status: P2_TODO, position: 0, priority: 1, due_date: day(-5), assignee: 1,
   });
 
+  // Every seeded item defaults to backlog_position: 0 (see seed() above), so
+  // a board with more than one seeded item is degenerate — everything ties
+  // at 0 — until something actually reorders it. Renumber each board's
+  // backlog bucket once here, right after seed data is built, so a fresh
+  // boot already has a real, contiguous 0-based order (ties broken by id,
+  // same as everywhere else). renumberBacklogBucket is a hoisted function
+  // declaration (defined further down, in the sprints & backlog section),
+  // so calling it here from module init is safe.
+  [...new Set(workItems.map(w => w.board))].forEach(boardId => renumberBacklogBucket(boardId, null));
+
   let links = [
     { id: id(), item_a: Math.min(task.id, bug.id), item_b: Math.max(task.id, bug.id),
       created_by: 1, created_at: now() },
@@ -821,6 +831,11 @@ const Store = (() => {
     }
 
     const siblings = workItems.filter(w => w.board === board.id && w.status === status);
+    // A freshly created work item defaults to the backlog (sprint: null) —
+    // appended to the end, the same way scheduleWorkItem computes a default
+    // position when none is given, so it doesn't collide with (or sort
+    // before) whatever's already there.
+    const backlogPosition = workItems.filter(w => w.board === board.id && w.sprint === null).length;
     const item = seed({
       id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
       board: board.id, item_type: itemType, title: fields.title.trim(),
@@ -828,7 +843,8 @@ const Store = (() => {
       priority: fields.priority || 2, due_date: fields.due_date || null,
       assignee: fields.assignee || null, parent: parent ? parent.id : null,
       components: fields.components || [], labels: labelIds, custom_fields: customFieldsValue,
-      release: fields.release ? Number(fields.release) : null, created_by: me.id,
+      release: fields.release ? Number(fields.release) : null, backlog_position: backlogPosition,
+      created_by: me.id,
     });
     return wait(itemOut(item));
   }
@@ -1805,8 +1821,10 @@ const Store = (() => {
     if (!role) return denied();
     if (projectById(board.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
     if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
+    const name = (fields.name || '').trim();
+    if (!name) return fail(400, { name: 'This field may not be blank.' });
     const sprint = {
-      id: ++nextSprintId, board: board.id, name: fields.name || '', goal: fields.goal || '',
+      id: ++nextSprintId, board: board.id, name, goal: fields.goal || '',
       state: 'planned', start_date: null, end_date: null, created_by: me.id, created_at: now(),
     };
     sprints.push(sprint);
@@ -1827,7 +1845,11 @@ const Store = (() => {
     if (!role) return denied();
     if (projectById(boardProject(sprint.board)).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
     if (!Logic.canManageSprints(role)) return fail(403, { detail: "Only this project's Owner or Admins can manage sprints." });
-    if ('name' in fields) sprint.name = fields.name;
+    if ('name' in fields) {
+      const trimmed = (fields.name || '').trim();
+      if (!trimmed) return fail(400, { name: 'This field may not be blank.' });
+      sprint.name = trimmed;
+    }
     if ('goal' in fields) sprint.goal = fields.goal;
     return wait(sprintOut(sprint));
   }
@@ -1874,14 +1896,25 @@ const Store = (() => {
     sprint.state = 'completed';
     sprint.end_date = Logic.today();
     // Every work item still scheduled into this sprint returns to the backlog,
-    // appended after whatever is already there — nextPos is captured from the
-    // backlog's current size BEFORE any straggler moves in, so stragglers land
-    // after existing backlog items instead of colliding with their positions.
+    // appended after whatever is already there. backlog_position is
+    // deliberately NOT contiguous after a delete (gaps like 0, 2, 3 are
+    // normal), so counting existing backlog items would under-allocate and
+    // collide with a real gap-adjacent position — a straggler could sort
+    // BEFORE the board's true last item instead of after it. Giving each
+    // straggler a position far past anything a real backlog_position could
+    // reach sidesteps computing an exact max: renumberBacklogBucket below
+    // then collapses the whole bucket (existing items + stragglers) to a
+    // clean 0..n-1 order, with stragglers guaranteed last and in their
+    // original relative order.
     const stragglers = workItems
       .filter(w => w.sprint === sprint.id)
       .sort((a, b) => a.backlog_position - b.backlog_position || a.id - b.id);
-    let nextPos = workItems.filter(w => w.board === sprint.board && w.sprint === null).length;
-    stragglers.forEach(w => { w.sprint = null; w.backlog_position = nextPos++; w.updated_at = now(); });
+    stragglers.forEach((w, i) => {
+      w.sprint = null;
+      w.backlog_position = Number.MAX_SAFE_INTEGER - (stragglers.length - 1 - i);
+      w.updated_at = now();
+    });
+    renumberBacklogBucket(sprint.board, null);
     return wait(sprintOut(sprint));
   }
 
