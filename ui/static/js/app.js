@@ -1906,6 +1906,9 @@ async function openTransferModal(project) {
 
 let boardState = { projectId: null, boardId: null, buckets: null, statuses: [], components: [], selectMode: false, selectedIds: new Set() };
 
+// Render-token guard for renderBulkBar — see the comment where it's used.
+let bulkBarSeq = 0;
+
 // Real column names aren't known until the project's statuses are fetched,
 // so the skeleton just shows generic placeholders while that's in flight.
 function skeletonColumns() {
@@ -2282,14 +2285,25 @@ function reportBulkResult(result, successKey) {
 async function renderBulkBar() {
   const bar = root.querySelector('[data-bulk-bar]');
   if (!bar) return;
-  const count = boardState.selectedIds.size;
-  if (!boardState.selectMode || count === 0) { bar.hidden = true; bar.innerHTML = ''; return; }
+  if (!boardState.selectMode || boardState.selectedIds.size === 0) { bar.hidden = true; bar.innerHTML = ''; return; }
   bar.hidden = false;
 
-  let members = [], projectComponents = [];
+  // Selecting another card while this fetch is in flight starts a second
+  // renderBulkBar() call. Without a guard, whichever call's fetch resolves
+  // LAST wins the innerHTML write — even the stale one — leaving a bar (and
+  // a Delete count) that doesn't match the current selection. Bail out here
+  // if a newer call has since started; that call renders instead.
+  const seq = ++bulkBarSeq;
+  let members = [];
   try {
-    [members, projectComponents] = await Promise.all([data.listMembers(boardState.projectId), data.listComponents(boardState.projectId)]);
+    members = await data.listMembers(boardState.projectId);
   } catch { /* proceed with what's available */ }
+  if (seq !== bulkBarSeq) return;
+
+  // boardState.components is fetched once per board visit (see viewBoard) —
+  // reuse it instead of refetching on every selection toggle.
+  const projectComponents = boardState.components || [];
+  const count = boardState.selectedIds.size;
 
   bar.innerHTML =
     `<span class="bulk-count">${count} selected</span>` +
@@ -2368,7 +2382,12 @@ async function renderBulkBar() {
   });
 
   bar.querySelector('[data-bulk-delete]').addEventListener('click', async () => {
-    if (!confirm(`Delete ${count} work item${count === 1 ? '' : 's'}? This can't be undone.`)) return;
+    // Read the selection fresh, not the `count` this bar was rendered with —
+    // the selection can change while this bar sits on screen, and the
+    // confirmation must describe what bulkDeleteWorkItems(ids()) below is
+    // actually about to delete, not what was selected when the bar was built.
+    const liveCount = boardState.selectedIds.size;
+    if (!confirm(`Delete ${liveCount} work item${liveCount === 1 ? '' : 's'}? This can't be undone.`)) return;
     try {
       const result = await data.bulkDeleteWorkItems(ids());
       reportBulkResult(result, 'deleted');
