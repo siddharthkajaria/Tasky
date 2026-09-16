@@ -3072,7 +3072,7 @@ async function openWorkItemModal(itemId) {
 
   if (canHaveChildren) loadChildren(item, ctx);
   loadLinks(item, ctx);
-  loadComments(item.id, modal, myRoleHere);
+  loadComments(item.id, modal, myRoleHere, close);
 
   modal.querySelector('[data-add-link]').addEventListener('click', () => openLinkModal(item, ctx));
 
@@ -3094,7 +3094,7 @@ async function openWorkItemModal(itemId) {
           toast('Comment posted, but the attachment failed to upload');
         }
       }
-      loadComments(item.id, modal, myRoleHere);
+      loadComments(item.id, modal, myRoleHere, close);
     } catch (err) { handle(err); }
   });
 
@@ -3244,7 +3244,7 @@ async function openLinkModal(item, ctx) {
 
 /* Comments -------------------------------------------------------------- */
 
-async function loadComments(itemId, modal, myRoleHere) {
+async function loadComments(itemId, modal, myRoleHere, close) {
   const list = modal.querySelector('[data-comments]');
   if (!list) return;
   try {
@@ -3253,14 +3253,14 @@ async function loadComments(itemId, modal, myRoleHere) {
       list.innerHTML = '<li class="empty-inline">No comments yet. Explain the tricky part here.</li>';
       return;
     }
-    list.replaceChildren(...comments.map(c => commentEl(c, itemId, modal, myRoleHere)));
+    list.replaceChildren(...comments.map(c => commentEl(c, itemId, modal, myRoleHere, close)));
   } catch (err) {
     list.innerHTML = '';
-    errorState(list, err, () => loadComments(itemId, modal, myRoleHere));
+    errorState(list, err, () => loadComments(itemId, modal, myRoleHere, close));
   }
 }
 
-function commentEl(comment, itemId, modal, myRoleHere) {
+function commentEl(comment, itemId, modal, myRoleHere, close) {
   const li = document.createElement('li');
   li.className = 'comment';
   const author = comment.author
@@ -3301,7 +3301,10 @@ function commentEl(comment, itemId, modal, myRoleHere) {
       await data.uploadCommentAttachment(comment.id, file);
       toast('Uploaded');
       loadCommentAttachments(comment.id, li.querySelector('[data-comment-attachments]'), myRoleHere);
-    } catch (err) { handle(err); }
+    } catch (err) {
+      if (err && err.sessionExpired) { close(); return handle(err); }
+      handle(err);
+    }
   });
 
   return li;

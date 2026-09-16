@@ -529,7 +529,8 @@ class WorkItemViewSet(viewsets.ModelViewSet):
 
 
 class CommentViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
-    """Deletion only — comments are created through the work item's own endpoint."""
+    """Deletion, plus attachments — comments are created through the work
+    item's own endpoint."""
 
     serializer_class = CommentSerializer
     permission_classes = [IsAuthenticated, IsProjectMember, ProjectNotArchived]
