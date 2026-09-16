@@ -245,5 +245,11 @@ const Api = (() => {
     listSprintWorkItems: (id) => request(`/api/sprints/${id}/work-items/`),
     listBacklog: (boardId) => request(`/api/boards/${boardId}/backlog/`),
     scheduleWorkItem: (itemId, payload) => request(`/api/work-items/${itemId}/schedule/`, { method: 'POST', body: payload }),
+
+    /* Automation ------------------------------------------------------------ */
+    listAutomationRules:   (projectId)          => request(`/api/projects/${projectId}/automation-rules/`),
+    createAutomationRule:  (projectId, fields)  => request(`/api/projects/${projectId}/automation-rules/`, { method: 'POST', body: fields }),
+    updateAutomationRule:  (projectId, id, fields) => request(`/api/projects/${projectId}/automation-rules/${id}/`, { method: 'PATCH', body: fields }),
+    deleteAutomationRule:  (projectId, id)      => request(`/api/projects/${projectId}/automation-rules/${id}/`, { method: 'DELETE' }),
   };
 })();

@@ -170,6 +170,20 @@ const Store = (() => {
   // separate helper rather than reusing sprintOut.
   const sprintDetailOut = (s) => s && { id: s.id, name: s.name, state: s.state, start_date: s.start_date, end_date: s.end_date };
 
+  let automationRules = [];
+  let nextRuleId = 12000;
+  const ruleById = (rid) => automationRules.find(r => r.id === Number(rid)) || null;
+  const rulesForProject = (projectId) =>
+    automationRules.filter(r => r.project === Number(projectId)).sort((a, b) => a.position - b.position);
+  // docs/api.md: the serializer exposes `created_by_detail` (nested user), not
+  // a raw `created_by` id — unlike sprintOut/fieldOut, which reuse the plain
+  // `created_by` key because that's what those two serializers actually name it.
+  const ruleOut = (r) => {
+    const out = Object.assign({}, r, { created_by_detail: userById(r.created_by) });
+    delete out.created_by;
+    return out;
+  };
+
   const fieldOut = (f) => Object.assign({}, f, {
     options: optionsForField(f.id),
     created_by: userById(f.created_by),
@@ -1984,6 +1998,89 @@ const Store = (() => {
     return wait(itemOut(item));
   }
 
+  /* ---- automation rules -------------------------------------------------- */
+  /* Deliberately NOT evaluated/fired here — evaluation happens server-side
+     only, wired into the single-item create/move endpoints. This is the
+     admin UI for defining rules, not a client-side automation engine.
+
+     Validation intentionally stops at what boards/automation.py's
+     trigger_filter_error/action_config_error check structurally (blank name,
+     to_status/to_category mutual exclusivity) — it does NOT re-validate that
+     a from_status/to_status/status_id actually belongs to this project, or
+     that a set_assignee user_id is a project member. Those checks require
+     cross-referencing statuses/memberships this mock doesn't thread through
+     here, and the real 400s for them are edge cases a well-behaved admin
+     form won't hit in practice. Flagged as a known gap, not an oversight. */
+
+  function listAutomationRules(projectId) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    if (!myRole(projectId)) return denied();
+    return wait(rulesForProject(projectId).map(ruleOut));
+  }
+
+  function createAutomationRule(projectId, fields) {
+    if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(projectId);
+    if (!role) return denied();
+    if (projectById(projectId).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageAutomation(role)) return fail(403, { detail: "You don't have permission to manage this project's automation rules." });
+    if (!fields.name || !fields.name.trim()) return fail(400, { name: 'This field may not be blank.' });
+    const triggerFilter = fields.trigger_filter || {};
+    // boards/automation.py only rejects the to_status/to_category combo for
+    // a status_changed trigger — a work_item_created rule's trigger_filter
+    // has no to_status/to_category to begin with, so this mirrors that gate
+    // rather than checking the two keys unconditionally.
+    if (fields.trigger_type === 'status_changed' && triggerFilter.to_status != null && triggerFilter.to_category != null) {
+      return fail(400, { trigger_filter: "to_status and to_category can't both be set." });
+    }
+    const siblings = rulesForProject(projectId);
+    const rule = {
+      id: ++nextRuleId, project: Number(projectId), name: fields.name.trim(),
+      trigger_type: fields.trigger_type, trigger_filter: triggerFilter,
+      action_type: fields.action_type, action_config: fields.action_config || {},
+      is_active: fields.is_active !== undefined ? !!fields.is_active : true,
+      position: siblings.length, created_by: me.id, created_at: now(),
+    };
+    automationRules.push(rule);
+    return wait(ruleOut(rule));
+  }
+
+  function updateAutomationRule(projectId, ruleId, fields) {
+    const rule = ruleById(ruleId);
+    if (!rule || rule.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(rule.project);
+    if (!role) return denied();
+    if (projectById(rule.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageAutomation(role)) return fail(403, { detail: "You don't have permission to manage this project's automation rules." });
+    if ('name' in fields && (!fields.name || !fields.name.trim())) return fail(400, { name: 'This field may not be blank.' });
+    // Re-check mutual exclusivity against the effective (patched-or-existing)
+    // trigger_type/trigger_filter, same as perform_update does server-side,
+    // and only when one of those two fields is actually part of this PATCH.
+    if ('trigger_filter' in fields || 'trigger_type' in fields) {
+      const effectiveType = 'trigger_type' in fields ? fields.trigger_type : rule.trigger_type;
+      const effectiveFilter = 'trigger_filter' in fields ? (fields.trigger_filter || {}) : rule.trigger_filter;
+      if (effectiveType === 'status_changed' && effectiveFilter.to_status != null && effectiveFilter.to_category != null) {
+        return fail(400, { trigger_filter: "to_status and to_category can't both be set." });
+      }
+    }
+    ['name', 'trigger_type', 'trigger_filter', 'action_type', 'action_config', 'is_active', 'position'].forEach(f => {
+      if (f in fields) rule[f] = (f === 'name') ? fields[f].trim() : fields[f];
+    });
+    return wait(ruleOut(rule));
+  }
+
+  function deleteAutomationRule(projectId, ruleId) {
+    const rule = ruleById(ruleId);
+    if (!rule || rule.project !== Number(projectId)) return fail(404, { detail: 'Not found.' });
+    const role = myRole(rule.project);
+    if (!role) return denied();
+    if (projectById(rule.project).is_archived) return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    if (!Logic.canManageAutomation(role)) return fail(403, { detail: "You don't have permission to manage this project's automation rules." });
+    automationRules = automationRules.filter(r => r.id !== rule.id);
+    rulesForProject(rule.project).forEach((r, i) => { r.position = i; });
+    return wait(null);
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -2073,5 +2170,6 @@ const Store = (() => {
     bulkMoveWorkItems, bulkUpdateWorkItems, bulkDeleteWorkItems, importWorkItems,
     listSprints, createSprint, getSprint, updateSprint, deleteSprint,
     startSprint, completeSprint, listSprintWorkItems, listBacklog, scheduleWorkItem,
+    listAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule,
   };
 })();
