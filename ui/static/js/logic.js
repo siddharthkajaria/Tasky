@@ -32,6 +32,16 @@ const Logic = (() => {
   const canLeave = (actingRole) => actingRole === 'admin' || actingRole === 'member';
   const canManageComponents = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Work item statuses / categories (sub-project 3, Workflows) ------ */
+
+  // Fixed, three-value vocabulary every status (built-in or custom) is
+  // tagged with — this is what "done-ness" logic keys off, not the status's
+  // name. Many statuses can share a category.
+  const CATEGORIES = ['todo', 'in_progress', 'done'];
+  const CATEGORY_LABELS = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
+
+  const canManageStatuses = (role) => role === 'owner' || role === 'admin';
+
   /* ---- Work item hierarchy --------------------------------------------- */
 
   const ITEM_TYPES = ['epic', 'story', 'task', 'bug', 'subtask'];
@@ -197,6 +207,7 @@ const Logic = (() => {
     ROLE_LABEL,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
+    CATEGORIES, CATEGORY_LABELS, canManageStatuses,
     ITEM_TYPES, ITEM_TYPE_LABEL, VALID_PARENT_TYPES,
     requiresParent, canHaveParent, isValidParent, parentCandidates,
     groupByStatus, findItem, applyMove, removeItem, moveWorkItem,
