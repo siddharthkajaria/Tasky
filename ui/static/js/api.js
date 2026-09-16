@@ -86,6 +86,7 @@ const Api = (() => {
     listBoards,
     getBoard:    (id)     => request(`/api/boards/${id}/`),
     createBoard: (fields) => request('/api/boards/', { method: 'POST', body: fields }),
+    updateBoard: (id, fields) => request(`/api/boards/${id}/`, { method: 'PATCH', body: fields }),
     getBoardWorkItems: (id) => request(`/api/boards/${id}/work-items/`),
 
     /* Work item statuses. Per-project and configurable (sub-project 3,

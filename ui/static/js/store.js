@@ -445,6 +445,28 @@ const Store = (() => {
     return wait(boardOut(board));
   }
 
+  // `project` is never sent by this UI (rename/description are the only
+  // fields it writes) — if a caller ever did send it unchanged, the real
+  // API accepts that; only an actual attempted move is rejected, mirrored
+  // here for parity.
+  function updateBoard(boardId, fields) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    if (!myRole(board.project)) return denied();
+    if ('project' in fields && Number(fields.project) !== board.project) {
+      return fail(400, { project: 'Boards cannot be moved between projects.' });
+    }
+    if (fields.name !== undefined) {
+      if (!fields.name || !fields.name.trim()) return fail(400, { name: 'This field may not be blank.' });
+      board.name = fields.name.trim();
+    }
+    if (fields.description !== undefined) {
+      board.description = fields.description;
+    }
+    board.updated_at = now();
+    return wait(boardOut(board));
+  }
+
   /* Every work item on the board in ONE position-ordered list across every
      status — interleaved, exactly like the real endpoint. */
   function getBoardWorkItems(boardId) {
@@ -853,7 +875,7 @@ const Store = (() => {
     listProjects, getProject, createProject, deleteProject,
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
     listMyInvitations, acceptInvitation, declineInvitation,
-    listBoards, getBoard, createBoard, getBoardWorkItems, listStatuses,
+    listBoards, getBoard, createBoard, updateBoard, getBoardWorkItems, listStatuses,
     createStatus, updateStatus, deleteStatus,
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
