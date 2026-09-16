@@ -136,18 +136,21 @@ one of them too, so mock mode stays an honest model rather than a picture:
 
 This is the important gap, and it is not the same as "out of scope". The backend
 has shipped sub-projects 1–11 with passing tests, and the signed-off prototype in
-`../design/` covers all of them. **This directory covers 6 screens of 11.**
+`../design/` covers all of them. **This directory covers 7 screens of 11.**
 
 Reachable only in `../design/`, never in production:
 
-custom fields and screens · labels · cross-project search · sprints and backlog ·
+screens · labels · cross-project search · sprints and backlog ·
 releases · attachments · site admin · project templates · automation ·
 bulk operations · CSV import · project archiving · status management (this UI
 *reads* per-project statuses but cannot edit them)
 
-`static/js/api.js` is the honest measure — it defines no client method for any of
-those endpoints. Wiring them up is Phase 2 work on an already-approved design, so
-it is not behind the design gate.
+`static/js/api.js` is the honest measure. It now defines client methods for
+Custom Fields (`listFields`, `getField`, `createField`, `renameField`,
+`deleteField`, `addFieldOption`, `renameFieldOption`, `moveFieldOption`,
+`deleteFieldOption`) — that screen is wired up — but still defines none for
+Screens or the rest of the list above. Wiring the remaining ones up is Phase 2
+work on an already-approved design, so it is not behind the design gate.
 
 Genuinely not built anywhere: notifications and reporting (sub-projects 12 and
 13, spec-only), activity history, per-board permissions, and password reset.

@@ -29,7 +29,7 @@ Memory files: `feature-menu-map.md` (every screen and route),
 **Design signed off: 2026-08-05.** Phase 2 is unlocked, and sub-projects 1–11
 have shipped backends. Sign-off is **per sub-project**, not once for the project.
 
-The live gap is the **production UI**: `ui/` implements 6 screens, `design/`
+The live gap is the **production UI**: `ui/` implements 7 screens, `design/`
 defines 11, and the backend supports all 11. Roughly ten sub-projects' worth of
 tested API surface is not reachable from the app.
 

@@ -257,6 +257,32 @@ work-item read path) finding from that review was fixed before merge; these are 
   `SET_NULL` only ever writes the one column, so this is safe — the test just doesn't pin it as
   tightly as the spec's own wording ("without touching any other field") asks for.
 
+## Custom Fields admin UI (sub-project 2b, Fields half) — deferred backend item
+
+Discovered during the final whole-branch review of wiring the Custom Fields admin UI into `ui/`
+(2026-09-16). Front-end-only plan, so this was correctly left untouched there — recorded here for
+whoever picks up the backend fix.
+
+- **`CustomFieldSerializer.validate_name`'s duplicate-name branch is dead code.** `CustomField.name`
+  has `unique=True` (`boards/models.py:268`), so DRF auto-attaches a `UniqueValidator` to the `name`
+  field. DRF runs field-level validators (`run_validation`, including that auto-validator) *before*
+  calling `validate_<field_name>`, so the auto-validator always fires first and wins. The hand-written
+  duplicate check at `boards/serializers.py:229-232` — written to match the convention used elsewhere
+  in this codebase (e.g. Statuses' `"<name>" already exists.` wording) — never runs. The real 400 body
+  for a duplicate field name is DRF's default, `{"name": ["custom field with this name already
+  exists."]}`, not the hand-written message. Nothing is broken by this — `docs/api.md` only documents
+  the shape (400, `name` key, case-insensitive), not the exact wording, and the front end's
+  `errorText()` doesn't pattern-match on message content — but it's dead code sitting behind a
+  misleading comment, and the discrepancy is worth closing properly. Fix: add
+  `extra_kwargs = {"name": {"validators": []}}` to `CustomFieldSerializer.Meta` so the auto-validator
+  is disabled and the hand-written `validate_name` actually runs.
+- **`boards/tests/test_custom_fields_api.py`'s duplicate-name test doesn't assert the message body** —
+  only the status code and that `"name"` is a key in the response — which is how the above went
+  unnoticed. Strengthen it to assert the actual message text once the fix above lands.
+- **`Screen.name`** (`boards/models.py:305`) also has `unique=True` — worth checking whether its own
+  serializer has the identical latent issue before picking this up, since the fix is likely the same
+  one-line pattern in both places.
+
 ## Local development note
 
 Machine setup is per-developer and belongs in
