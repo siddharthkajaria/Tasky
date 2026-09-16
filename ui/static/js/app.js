@@ -209,6 +209,7 @@ async function resolveBoard(boardId) {
     const board = await data.getBoard(boardId);
     location.replace(`#/projects/${board.project}/boards/${board.id}`);
   } catch (err) {
+    pendingOpenItem = null;
     handle(err);
     location.replace('#/projects');
   }
@@ -775,6 +776,17 @@ async function openTransferModal(project) {
 
 let boardState = { projectId: null, boardId: null, buckets: null, statuses: [], components: [] };
 
+/* Set by taskRow() just before it navigates to a board from My Tasks, so
+   viewBoard() can auto-open that item's own detail modal once the board has
+   loaded — otherwise the user lands on the board with no indication of
+   which card is theirs. Read-and-cleared once by viewBoard(), and only
+   acted on if the board it loads matches the board it was set for, so a
+   navigation elsewhere in between can't cause a stale reopen later.
+   Deliberately not part of the hash: a one-shot UI nicety layered on the
+   board view, not view state — a refresh or back/forward simply lands on
+   the plain board, which is fine. */
+let pendingOpenItem = null;
+
 // Real column names aren't known until the project's statuses are fetched,
 // so the skeleton just shows generic placeholders while that's in flight.
 function skeletonColumns() {
@@ -821,6 +833,11 @@ async function viewBoard(projectId, boardId) {
     boardState.statuses = statuses;
     boardState.buckets = Logic.groupByStatus(items, statuses);
     paintColumns();
+
+    if (pendingOpenItem && pendingOpenItem.boardId === boardState.boardId) {
+      openWorkItemModal(pendingOpenItem.itemId);
+    }
+    pendingOpenItem = null;
   } catch (err) {
     if (err && err.sessionExpired) return handle(err);
     columnsEl.innerHTML = '';
@@ -1452,8 +1469,14 @@ function taskRow(item) {
     `<span class="state ${item.status_detail && item.status_detail.category === 'in_progress' ? 'active' : ''}">${esc(item.status_detail ? item.status_detail.name : '')}</span>`;
 
   /* The tasks endpoint returns a board id but no project id, so the board
-     route resolves the project itself and rewrites the hash. */
-  const open = () => { location.hash = `#/boards/${item.board}`; };
+     route resolves the project itself and rewrites the hash. Stash which
+     item this row is for so viewBoard() can open its detail modal once the
+     board lands — otherwise there's no indication which card is the
+     user's. */
+  const open = () => {
+    pendingOpenItem = { boardId: Number(item.board), itemId: item.id };
+    location.hash = `#/boards/${item.board}`;
+  };
   li.addEventListener('click', open);
   li.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
