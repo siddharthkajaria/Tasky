@@ -401,6 +401,52 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .component-row .who[contenteditable]:hover,
 .component-row .who[contenteditable]:focus { background: var(--sunk); outline: none; }
 
+/* Workflow status categories (sub-project 3) — same three colours the
+   board's columns use, pulled out as standalone dots for the Statuses
+   management list. */
+.cat-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--rule-2);
+}
+.cat-dot.cat-in_progress { background: var(--accent); }
+.cat-dot.cat-done { background: var(--ink-3); }
+
+/* An ordered list a human hand-sorts — the Statuses management list. */
+.order-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--sunk);
+  border-radius: var(--r);
+  padding: 6px 8px 6px 4px;
+  font-size: 12.5px;
+  animation: row-in .18s var(--ease-out) both;
+}
+.order-row .label { flex: 1; }
+.order-row .label[contenteditable] { border-radius: 2px; padding: 1px 4px; margin: -1px -4px; }
+.order-row .label[contenteditable]:hover,
+.order-row .label[contenteditable]:focus { background: var(--surface); outline: none; }
+.order-row .btn-danger { padding: 2px 8px; font-size: 11px; }
+
+.order-handle { display: flex; flex-direction: column; gap: 1px; }
+.icon-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  border-radius: 2px;
+  line-height: 1;
+  padding: 0 4px;
+  font-size: 9px;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.icon-btn:hover:not([disabled]) { background: var(--surface); color: var(--ink); }
+.icon-btn[disabled] { opacity: .3; cursor: default; }
+
 /* Work item type system ------------------------------------------------ */
 
 .type-dot {

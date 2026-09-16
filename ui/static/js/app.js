@@ -326,6 +326,7 @@ async function viewProject(projectId) {
   main.replaceChildren(tpl('tpl-project'));
   main.querySelector('[data-boards]').innerHTML = skeletonList(2);
   main.querySelector('[data-components]').innerHTML = skeletonList(2);
+  main.querySelector('[data-statuses]').innerHTML = skeletonList(2);
   main.querySelector('[data-members]').innerHTML = skeletonList(3);
 
   let project, myProjects;
