@@ -319,6 +319,252 @@ function projectRow(project) {
   return li;
 }
 
+/* Custom fields admin (sub-project 2b) ----------------------------------- */
+
+async function viewFields() {
+  const main = outlet();
+  main.replaceChildren(tpl('tpl-fields'));
+
+  const list = main.querySelector('[data-list]');
+  const form = main.querySelector('[data-create-field]');
+  const typeSelect = form.querySelector('[data-type-select]');
+  const hint = main.querySelector('[data-type-hint]');
+  const errorEl = main.querySelector('[data-create-error]');
+  const locked = main.querySelector('[data-locked]');
+  list.innerHTML = skeletonList(4);
+
+  let projects;
+  try { projects = await data.listProjects(); } catch (err) { list.innerHTML = ''; return handle(err); }
+  const canManage = isOwnerOfAnyProject(projects);
+
+  if (canManage) {
+    form.hidden = false;
+    typeSelect.replaceChildren(...Logic.FIELD_TYPES.map(t => new Option(Logic.FIELD_TYPE_LABEL[t], t)));
+    const showHint = () => {
+      hint.textContent = `${Logic.FIELD_TYPE_HINT[typeSelect.value]} A field's type is fixed once it's created.`;
+      hint.hidden = false;
+    };
+    typeSelect.addEventListener('change', showHint);
+    showHint();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.hidden = true;
+      const nameInput = form.querySelector('[name=name]');
+      try {
+        const field = await data.createField({ name: nameInput.value, field_type: typeSelect.value });
+        nameInput.value = '';
+        nameInput.focus();
+        toast(`"${field.name}" added`);
+        await paintFields(list, true);
+        if (Logic.fieldHasOptions(field.field_type)) openFieldOptionsModal(field.id, true, () => paintFields(list, true));
+      } catch (err) {
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+      }
+    });
+  } else {
+    locked.hidden = false;
+    locked.textContent =
+      'Only a project Owner can add or change custom fields — Owner of any project counts. ' +
+      'You can see the whole list, and use these fields on any work item whose screen includes them.';
+  }
+
+  await paintFields(list, canManage);
+}
+
+async function paintFields(list, canManage) {
+  list.innerHTML = skeletonList(4);
+  try {
+    const fields = await data.listFields();
+    if (!fields.length) {
+      list.innerHTML = canManage
+        ? '<li class="empty">No custom fields yet. Name one above and pick its type.</li>'
+        : '<li class="empty">No custom fields have been created yet.</li>';
+      return;
+    }
+    const rows = fields.map(f => fieldRow(f, list, canManage));
+    list.replaceChildren(...rows);
+    stagger(rows);
+  } catch (err) {
+    if (err && err.sessionExpired) return handle(err);
+    errorState(list, err, () => paintFields(list, canManage));
+  }
+}
+
+function fieldRow(field, list, canManage) {
+  const li = document.createElement('li');
+  li.className = 'admin-row';
+  const hasOptions = Logic.fieldHasOptions(field.field_type);
+
+  const bits = [];
+  if (hasOptions) bits.push(`${field.options.length} option${field.options.length === 1 ? '' : 's'}`);
+
+  li.innerHTML =
+    `<span class="name" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(field.name)}</span>` +
+    `<span class="type-badge ft">${esc(Logic.FIELD_TYPE_LABEL[field.field_type])}</span>` +
+    (bits.length ? `<span class="row-meta">${esc(bits.join(' · '))}</span>` : '') +
+    `<span class="actions">` +
+      (hasOptions ? `<button class="btn" data-options>Options</button>` : '') +
+      (canManage ? `<button class="btn btn-danger" data-delete>Delete</button>` : '') +
+    `</span>`;
+
+  const nameEl = li.querySelector('[data-rename]');
+  if (nameEl) {
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+      if (e.key === 'Escape') { nameEl.textContent = field.name; nameEl.blur(); }
+    });
+    nameEl.addEventListener('blur', async () => {
+      const value = nameEl.textContent.trim();
+      if (!value || value === field.name) { nameEl.textContent = field.name; return; }
+      try {
+        await data.renameField(field.id, value);
+        field.name = value;
+        toast('Field renamed');
+      } catch (err) {
+        nameEl.textContent = field.name;
+        handle(err);
+      }
+    });
+  }
+
+  const optionsBtn = li.querySelector('[data-options]');
+  if (optionsBtn) {
+    optionsBtn.addEventListener('click', () => openFieldOptionsModal(field.id, canManage, () => paintFields(list, canManage)));
+  }
+
+  const deleteBtn = li.querySelector('[data-delete]');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      try {
+        await data.deleteField(field.id);
+        toast(`"${field.name}" deleted`);
+        await paintFields(list, canManage);
+      } catch (err) { handle(err); }
+    });
+  }
+
+  return li;
+}
+
+/* Field options — an ordered list, edited in place. Reordering swaps an
+   adjacent pair's `position` via two sequential PATCH calls, same pattern
+   as Phase 1's status reorder. */
+async function openFieldOptionsModal(fieldId, canManage, onChange) {
+  let field;
+  try { field = await data.getField(fieldId); } catch (err) { return handle(err); }
+  if (!Logic.fieldHasOptions(field.field_type)) {
+    return toast(`"${field.name}" is a ${Logic.FIELD_TYPE_LABEL[field.field_type]} — only Select and Multi-select have options.`, true);
+  }
+
+  const body =
+    `<div class="modal-head">` +
+      `<p class="eyebrow">${esc(field.name)} · <span class="type-badge ft">${esc(Logic.FIELD_TYPE_LABEL[field.field_type])}</span></p>` +
+      `<button class="btn btn-quiet" type="button" data-close>Close</button>` +
+    `</div>` +
+    `<p class="hint">This order is the order they appear in the picker. Saved values store an option's id, never its label, so renaming one never changes what a work item already picked.</p>` +
+    `<ul class="order-list" data-options></ul>` +
+    `<p class="form-error" data-error hidden></p>` +
+    (canManage
+      ? `<form class="add-row" data-add novalidate>` +
+          `<input name="label" placeholder="New option" aria-label="New option" autocomplete="off">` +
+          `<button class="btn" type="submit">Add option</button>` +
+        `</form>`
+      : `<p class="hint">Only a project Owner can change these.</p>`);
+
+  const { modal } = openModal(body);
+  const listEl = modal.querySelector('[data-options]');
+  const errorEl = modal.querySelector('[data-error]');
+  const clearError = () => { errorEl.hidden = true; };
+  const showError = (err) => { errorEl.textContent = errorText(err); errorEl.hidden = false; };
+
+  function paint() {
+    if (!field.options.length) {
+      listEl.innerHTML = '<li class="empty-inline">No options yet — add the first one below.</li>';
+      return;
+    }
+    listEl.replaceChildren(...field.options.map(optionRow));
+  }
+
+  function optionRow(option, i) {
+    const last = i === field.options.length - 1;
+    const li = document.createElement('li');
+    li.className = 'order-row';
+    li.innerHTML =
+      (canManage
+        ? `<span class="order-handle">` +
+            `<button class="icon-btn" data-up ${i === 0 ? 'disabled' : ''} aria-label="Move up" type="button">▲</button>` +
+            `<button class="icon-btn" data-down ${last ? 'disabled' : ''} aria-label="Move down" type="button">▼</button>` +
+          `</span>`
+        : '') +
+      `<span class="pos-index">${i + 1}</span>` +
+      `<span class="label" ${canManage ? 'contenteditable="true" data-rename' : ''}>${esc(option.label)}</span>` +
+      (canManage ? `<button class="btn btn-danger" data-remove type="button">Remove</button>` : '');
+
+    const run = async (fn) => {
+      clearError();
+      try {
+        field = await fn();
+        paint();
+        if (onChange) onChange();
+      } catch (err) { showError(err); }
+    };
+
+    const up = li.querySelector('[data-up]');
+    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i - 1].position })
+      .then(() => data.moveFieldOption(field.id, field.options[i - 1].id, { position: option.position }))
+      .then(() => data.getField(field.id))));
+    const down = li.querySelector('[data-down]');
+    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i + 1].position })
+      .then(() => data.moveFieldOption(field.id, field.options[i + 1].id, { position: option.position }))
+      .then(() => data.getField(field.id))));
+    const remove = li.querySelector('[data-remove]');
+    if (remove) remove.addEventListener('click', () => run(() => data.deleteFieldOption(field.id, option.id)));
+
+    const labelEl = li.querySelector('[data-rename]');
+    if (labelEl) {
+      labelEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); labelEl.blur(); }
+        if (e.key === 'Escape') { labelEl.textContent = option.label; labelEl.blur(); }
+      });
+      labelEl.addEventListener('blur', async () => {
+        const value = labelEl.textContent.trim();
+        if (!value || value === option.label) { labelEl.textContent = option.label; return; }
+        clearError();
+        try {
+          field = await data.renameFieldOption(field.id, option.id, value);
+          paint();
+          if (onChange) onChange();
+        } catch (err) {
+          labelEl.textContent = option.label;
+          showError(err);
+        }
+      });
+    }
+    return li;
+  }
+
+  const addForm = modal.querySelector('[data-add]');
+  if (addForm) {
+    addForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = addForm.querySelector('[name=label]');
+      if (!input.value.trim()) return;
+      clearError();
+      try {
+        field = await data.addFieldOption(field.id, input.value);
+        input.value = '';
+        input.focus();
+        paint();
+        if (onChange) onChange();
+      } catch (err) { showError(err); }
+    });
+  }
+
+  paint();
+}
+
 /* Project detail ------------------------------------------------------- */
 
 async function viewProject(projectId) {
