@@ -657,6 +657,22 @@ const Store = (() => {
     );
   }
 
+  /* Mirrors the real backend's `_reposition` (see FieldOptionViewSet and
+     WorkItemStatusViewSet in boards/views.py): `rawTarget` is a plain index,
+     clamped into range and inserted among `others` (siblings excluding the
+     item itself), then the WHOLE list is renumbered 0..n-1 in one pass.
+     A bare `item.position = rawTarget` assignment — this mock's old
+     behaviour — could collide with an existing sibling's position instead
+     of honestly modeling the single-PATCH clamp-and-renumber contract the
+     real API documents. */
+  function reposition(others, item, rawTarget) {
+    let target = Math.trunc(Number(rawTarget));
+    if (!Number.isFinite(target)) target = 0;
+    target = Math.min(Math.max(0, target), others.length);
+    others.splice(target, 0, item);
+    others.forEach((sibling, i) => { sibling.position = i; });
+  }
+
   function listStatuses(projectId) {
     if (!projectById(projectId)) return fail(404, { detail: 'Not found.' });
     if (!myRole(projectId)) return denied();
@@ -705,7 +721,10 @@ const Store = (() => {
       status.name = fields.name.trim();
     }
     if ('category' in fields) status.category = fields.category;
-    if ('position' in fields) status.position = Number(fields.position);
+    if ('position' in fields) {
+      const others = statusesForProject(status.project).filter(s => s.id !== status.id);
+      reposition(others, status, fields.position);
+    }
     return wait(status);
   }
 
@@ -1244,7 +1263,10 @@ const Store = (() => {
     const option = fieldOptions.find(o => o.id === Number(optionId) && o.field === Number(fieldId));
     if (!field || !option) return fail(404, { detail: 'Not found.' });
     if (!isOwnerOfAnyProject()) return fail(403, { detail: "You don't have permission to manage this field's options." });
-    if ('position' in fields) option.position = Number(fields.position);
+    if ('position' in fields) {
+      const others = optionsForField(option.field).filter(o => o.id !== option.id);
+      reposition(others, option, fields.position);
+    }
     return wait(fieldOut(field));
   }
 

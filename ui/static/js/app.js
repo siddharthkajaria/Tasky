@@ -495,9 +495,13 @@ function fieldRow(field, list, canManage) {
   return li;
 }
 
-/* Field options — an ordered list, edited in place. Reordering swaps an
-   adjacent pair's `position` via two sequential PATCH calls, same pattern
-   as Phase 1's status reorder. */
+/* Field options — an ordered list, edited in place. Reordering sends the
+   target INDEX in a single PATCH — `FieldOptionViewSet._reposition` clamps
+   it and renumbers the whole sibling list server-side in one transaction.
+   Two sequential PATCHes (one per swapped option) would race against that
+   renumbering: the second call's target position is computed from
+   already-stale sibling data, which can land the list in the wrong final
+   order. */
 async function openFieldOptionsModal(fieldId, canManage, onChange) {
   let field;
   try { field = await data.getField(fieldId); } catch (err) { return handle(err); }
@@ -559,12 +563,10 @@ async function openFieldOptionsModal(fieldId, canManage, onChange) {
     };
 
     const up = li.querySelector('[data-up]');
-    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i - 1].position })
-      .then(() => data.moveFieldOption(field.id, field.options[i - 1].id, { position: option.position }))
+    if (up) up.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i - 1 })
       .then(() => data.getField(field.id))));
     const down = li.querySelector('[data-down]');
-    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: field.options[i + 1].position })
-      .then(() => data.moveFieldOption(field.id, field.options[i + 1].id, { position: option.position }))
+    if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i + 1 })
       .then(() => data.getField(field.id))));
     const remove = li.querySelector('[data-remove]');
     if (remove) remove.addEventListener('click', () => run(() => data.deleteFieldOption(field.id, option.id)));
@@ -1152,21 +1154,22 @@ function statusRow(status, i, all, main, project) {
 
   const refresh = () => renderStatuses(main, project);
 
+  // A single PATCH carrying the target INDEX — WorkItemStatusViewSet._reposition
+  // clamps it and renumbers every sibling status server-side in one
+  // transaction. Two sequential PATCHes (one per swapped status) would race
+  // against that renumbering, since the second call's target position is
+  // computed from already-stale sibling data.
   const up = li.querySelector('[data-up]');
   if (up) up.addEventListener('click', async () => {
-    const other = all[i - 1];
     try {
-      await data.updateStatus(project.id, status.id, { position: other.position });
-      await data.updateStatus(project.id, other.id, { position: status.position });
+      await data.updateStatus(project.id, status.id, { position: i - 1 });
       await refresh();
     } catch (err) { handle(err); }
   });
   const down = li.querySelector('[data-down]');
   if (down) down.addEventListener('click', async () => {
-    const other = all[i + 1];
     try {
-      await data.updateStatus(project.id, status.id, { position: other.position });
-      await data.updateStatus(project.id, other.id, { position: status.position });
+      await data.updateStatus(project.id, status.id, { position: i + 1 });
       await refresh();
     } catch (err) { handle(err); }
   });
