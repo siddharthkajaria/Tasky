@@ -105,11 +105,17 @@ flagged individually above where they're most likely to need a second look.
   /api/work-items/{id}/move/`). Nothing about it requires new backend surface, so it isn't part
   of this spec — it's implementation detail for whoever eventually builds the Phase 1 prototype
   for this sub-project.
-- **Attachments live directly on the work item, not on a comment.** Jira supports both
+- ~~**Attachments live directly on the work item, not on a comment.** Jira supports both
   (attach-to-issue and attach-to-comment); this draft supports only the former; a comment that
   references a file just links to it in prose. Keeping attachments as one flat list per work
   item avoids a second parent-type branch in the model and matches the flat, simple shape of
-  everything else on the detail view today.
+  everything else on the detail view today.~~
+  **Superseded 2026-09-16.** The user explicitly asked for comment attachments; `Attachment`
+  gained a nullable `comment` FK alongside the existing nullable `work_item` FK (exactly one
+  set, enforced by a `CheckConstraint`) rather than a second model, keeping the "one shared
+  model" property this non-goal was protecting even though the flat-per-work-item shape it
+  also cited no longer holds. See `docs/api.md`'s Attachments section and
+  `boards/tests/test_comment_attachments_api.py`.
 
 ## Data model
 
@@ -240,9 +246,10 @@ GET      /api/attachments/{id}/download/     streams the file (any project membe
 - **Quick actions / inline editing polish** (in-place title edit, inline status change,
   keyboard shortcuts in the detail view). Pure `design/`/`ui/` implementation work against
   already-existing endpoints; no new backend surface, so no part of this spec.
-- **Attachments on comments** (as opposed to on the work item directly). Not requested; keeping
+- ~~**Attachments on comments** (as opposed to on the work item directly). Not requested; keeping
   attachments as one flat list per work item is simpler and matches this tool's existing
-  preference for flat, non-nested structures.
+  preference for flat, non-nested structures.~~ **Superseded 2026-09-16** — see the matching
+  note earlier in this spec's "Non-goals" list for the API shape that shipped.
 - **Malware/antivirus scanning, file-type allow/deny lists, image thumbnail generation, and
   attachment versioning** (replacing a file in place rather than delete-and-reupload). None
   requested; each is real added scope with no current demand.
