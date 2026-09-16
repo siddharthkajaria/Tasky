@@ -467,8 +467,11 @@ function fieldRow(field, list, canManage) {
       if (!value || value === field.name) { nameEl.textContent = field.name; return; }
       try {
         await data.renameField(field.id, value);
-        field.name = value;
         toast('Field renamed');
+        // CustomField.Meta.ordering is ["name"] server-side, so a rename can
+        // change this field's place in the list — repaint the whole thing
+        // rather than patch this row's node in place.
+        await paintFields(list, canManage);
       } catch (err) {
         nameEl.textContent = field.name;
         handle(err);
@@ -484,6 +487,7 @@ function fieldRow(field, list, canManage) {
   const deleteBtn = li.querySelector('[data-delete]');
   if (deleteBtn) {
     deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete field "${field.name}"? This can't be undone.`)) return;
       try {
         await data.deleteField(field.id);
         toast(`"${field.name}" deleted`);
@@ -569,7 +573,10 @@ async function openFieldOptionsModal(fieldId, canManage, onChange) {
     if (down) down.addEventListener('click', () => run(() => data.moveFieldOption(field.id, option.id, { position: i + 1 })
       .then(() => data.getField(field.id))));
     const remove = li.querySelector('[data-remove]');
-    if (remove) remove.addEventListener('click', () => run(() => data.deleteFieldOption(field.id, option.id)));
+    if (remove) remove.addEventListener('click', () => {
+      if (!confirm(`Delete option "${option.label}"? This can't be undone.`)) return;
+      run(() => data.deleteFieldOption(field.id, option.id));
+    });
 
     const labelEl = li.querySelector('[data-rename]');
     if (labelEl) {
