@@ -1175,7 +1175,9 @@ const Store = (() => {
     return memberships.filter(m => m.user === me.id).map(m => m.role);
   }
 
-  function listFields() { return wait(customFields.map(fieldOut)); }
+  function listFields() {
+    return wait(customFields.map(fieldOut).sort((a, b) => a.name.localeCompare(b.name)));
+  }
 
   function createField(fields) {
     if (!Logic.canManageDefinitions(myRoles())) {
@@ -1287,7 +1289,9 @@ const Store = (() => {
 
   /* ---- screens ------------------------------------------------------------ */
 
-  function listScreens() { return wait(screens.map(screenOut)); }
+  function listScreens() {
+    return wait(screens.map(screenOut).sort((a, b) => a.name.localeCompare(b.name)));
+  }
 
   function createScreen(name) {
     if (!Logic.canManageDefinitions(myRoles())) {
