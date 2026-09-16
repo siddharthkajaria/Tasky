@@ -89,6 +89,18 @@ const Logic = (() => {
   const RELEASE_STATUS_LABEL = { unreleased: 'Unreleased', released: 'Released', archived: 'Archived' };
   const canManageReleases = (role) => role === 'owner' || role === 'admin';
 
+  /* ---- Attachments (sub-project 8) ----------------------------------------
+     Wider than a comment's author-only-unless-account-gone rule: the
+     uploader can always delete their own upload, AND an Owner/Admin of the
+     work item's project can delete anyone's — an attachment reads as
+     shared project property rather than a personal remark. */
+  function canDeleteAttachment(uploadedBy, actingUserId, actingRole) {
+    if (uploadedBy !== null && uploadedBy !== undefined && Number(uploadedBy) === Number(actingUserId)) {
+      return true;
+    }
+    return actingRole === 'owner' || actingRole === 'admin';
+  }
+
   const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
   function isIsoDate(value) {
     const s = String(value);
@@ -359,6 +371,7 @@ const Logic = (() => {
     FIELD_TYPES, FIELD_TYPE_LABEL, FIELD_TYPE_HINT, fieldHasOptions, isMultiValue,
     canManageDefinitions, canManageScreenAssignments,
     RELEASE_STATUSES, RELEASE_STATUS_LABEL, canManageReleases,
+    canDeleteAttachment,
     isIsoDate, isBlankValue, fieldValueError, screenValueErrors,
     canInvite, canRemove, canChangeRole,
     canTransferOwnership, canDeleteProject, canLeave, canManageComponents,
