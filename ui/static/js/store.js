@@ -1619,7 +1619,7 @@ const Store = (() => {
     }
     if (fields.labels_add && fields.labels_add.length) {
       const resolved = resolveLabelNames(fields.labels_add);
-      if (resolved.error) return fail(400, resolved.error);
+      if (resolved.error) return fail(400, { labels_add: resolved.error.labels });
       labelIds = resolved.ids;
     }
 
@@ -1644,6 +1644,8 @@ const Store = (() => {
     batch.items.forEach(item => {
       workItems.forEach(w => { if (w.parent === item.id) w.parent = null; });
       workItems = workItems.filter(w => w.id !== item.id);
+      comments = comments.filter(c => c.card !== item.id);
+      links = links.filter(l => l.item_a !== item.id && l.item_b !== item.id);
       deleted.push(item.id);
     });
     const failed = batch.missing.map(id => ({ id, error: 'Not found.' }));
@@ -1705,7 +1707,7 @@ const Store = (() => {
       const title = get('title');
       if (!title) { failed.push({ row: rowNum, title: null, error: 'Title is required.' }); return; }
 
-      const itemType = get('item_type') || 'task';
+      const itemType = get('item_type').toLowerCase() || 'task';
       if (itemType === 'subtask') { failed.push({ row: rowNum, title, error: 'Subtasks cannot be imported (need a parent).' }); return; }
       if (!['epic', 'story', 'task', 'bug'].includes(itemType)) {
         failed.push({ row: rowNum, title, error: `Invalid item_type "${itemType}".` }); return;
