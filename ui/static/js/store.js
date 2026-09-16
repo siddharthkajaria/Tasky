@@ -1552,6 +1552,222 @@ const Store = (() => {
     return wait({ results });
   }
 
+  /* ---- bulk operations & import ---------------------------------------------
+     Best-effort per id/row, not all-or-nothing, matching docs/api.md exactly:
+     an id/row that fails is reported in the response, everything else still
+     goes through. */
+
+  function resolveBulkBatch(rawIds) {
+    if (!Array.isArray(rawIds) || !rawIds.length) return { error: fail(400, { ids: 'Provide a non-empty list of ids.' }) };
+    if (rawIds.length > 200) return { error: fail(400, { ids: 'No more than 200 ids per request.' }) };
+    const ids = rawIds.map(Number);
+    if (ids.some(Number.isNaN)) return { error: fail(400, { ids: 'Every id must be an integer.' }) };
+
+    const found = ids.map(i => itemById(i)).filter(Boolean);
+    if (!found.length) return { error: fail(400, { ids: 'None of these ids exist.' }) };
+    const projectIds = new Set(found.map(w => boardProject(w.board)));
+    if (projectIds.size > 1) return { error: fail(400, { ids: 'All ids must belong to work items in the same project.' }) };
+
+    const projectId = [...projectIds][0];
+    if (!myRole(projectId)) return { error: denied() };
+    if (projectById(projectId).is_archived) {
+      return { error: fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' }) };
+    }
+    const foundIds = new Set(found.map(w => w.id));
+    const missing = [...new Set(ids)].filter(i => !foundIds.has(i));
+    return { items: found, missing, projectId };
+  }
+
+  function bulkMoveWorkItems(rawIds, statusId) {
+    const batch = resolveBulkBatch(rawIds);
+    if (batch.error) return batch.error;
+    const status = statusById(statusId);
+    if (!status || status.project !== batch.projectId) return fail(400, { status: "Status must belong to this item's project." });
+
+    const succeeded = [];
+    batch.items.forEach(item => {
+      const from = item.status;
+      item.status = status.id;
+      item.position = 0.5 + workItems.filter(w => w.board === item.board && w.status === status.id && w.id !== item.id).length;
+      renumber(item.board, status.id);
+      if (from !== status.id) renumber(item.board, from);
+      succeeded.push(item.id);
+    });
+    const failed = batch.missing.map(id => ({ id, error: 'Not found.' }));
+    return wait({ succeeded, failed });
+  }
+
+  function bulkUpdateWorkItems(rawIds, fields) {
+    const batch = resolveBulkBatch(rawIds);
+    if (batch.error) return batch.error;
+
+    let assignee, priority, componentObjs = [], labelIds = [];
+    if ('assignee' in fields) {
+      if (fields.assignee !== null) {
+        assignee = userById(fields.assignee);
+        if (!assignee) return fail(400, { assignee: 'User not found.' });
+      } else { assignee = null; }
+    }
+    if (fields.priority !== undefined && fields.priority !== null) {
+      priority = Number(fields.priority);
+      if (![1, 2, 3].includes(priority)) return fail(400, { priority: 'Must be 1, 2, or 3.' });
+    }
+    if (fields.components_add && fields.components_add.length) {
+      componentObjs = fields.components_add.map(id => components.find(c => c.id === Number(id)));
+      if (componentObjs.some(c => !c)) return fail(400, { components_add: 'Component not found.' });
+      if (componentObjs.some(c => c.project !== batch.projectId)) return fail(400, { components_add: "Components must belong to this item's project." });
+    }
+    if (fields.labels_add && fields.labels_add.length) {
+      const resolved = resolveLabelNames(fields.labels_add);
+      if (resolved.error) return fail(400, resolved.error);
+      labelIds = resolved.ids;
+    }
+
+    const succeeded = [];
+    batch.items.forEach(item => {
+      if ('assignee' in fields) item.assignee = assignee ? assignee.id : null;
+      if (priority !== undefined) item.priority = priority;
+      if (componentObjs.length) item.components = [...new Set([...(item.components || []), ...componentObjs.map(c => c.id)])];
+      if (labelIds.length) item.labels = [...new Set([...(item.labels || []), ...labelIds])];
+      item.updated_at = now();
+      succeeded.push(item.id);
+    });
+    const failed = batch.missing.map(id => ({ id, error: 'Not found.' }));
+    return wait({ succeeded, failed });
+  }
+
+  function bulkDeleteWorkItems(rawIds) {
+    const batch = resolveBulkBatch(rawIds);
+    if (batch.error) return batch.error;
+
+    const deleted = [];
+    batch.items.forEach(item => {
+      workItems.forEach(w => { if (w.parent === item.id) w.parent = null; });
+      workItems = workItems.filter(w => w.id !== item.id);
+      deleted.push(item.id);
+    });
+    const failed = batch.missing.map(id => ({ id, error: 'Not found.' }));
+    return wait({ deleted, failed });
+  }
+
+  const IMPORT_PRIORITY = { low: 1, medium: 2, high: 3 };
+
+  function parseCsv(text) {
+    // Minimal RFC-4180-ish parser: handles quoted fields with embedded
+    // commas/quotes, not multi-line quoted fields (good enough for the
+    // simple flat rows this feature's rows are — same scope the real
+    // Python `csv` module's default dialect covers for these inputs).
+    const rows = [];
+    text.split(/\r\n|\n/).forEach(line => {
+      if (line === '') return;
+      const cells = [];
+      let cur = '', inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuotes) {
+          if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+          else if (ch === '"') { inQuotes = false; }
+          else { cur += ch; }
+        } else if (ch === '"') { inQuotes = true; }
+        else if (ch === ',') { cells.push(cur); cur = ''; }
+        else { cur += ch; }
+      }
+      cells.push(cur);
+      rows.push(cells);
+    });
+    return rows;
+  }
+
+  async function importWorkItems(boardId, csvFile) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    if (!myRole(board.project)) return denied();
+    if (projectById(board.project).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+
+    const text = await csvFile.text();
+    if (!text.trim()) return fail(400, { csv: 'CSV file is empty.' });
+    const rows = parseCsv(text);
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const titleIdx = header.indexOf('title');
+    if (titleIdx === -1) return fail(400, { csv: 'CSV must include a "title" column.' });
+    const dataRows = rows.slice(1);
+    if (dataRows.length > 500) return fail(400, { csv: 'CSV has more than 500 rows.' });
+
+    const col = (name) => header.indexOf(name);
+    const failed = [];
+    let imported = 0;
+
+    dataRows.forEach((cells, i) => {
+      const rowNum = i + 2;
+      const get = (name) => { const idx = col(name); return idx === -1 ? '' : (cells[idx] || '').trim(); };
+      const title = get('title');
+      if (!title) { failed.push({ row: rowNum, title: null, error: 'Title is required.' }); return; }
+
+      const itemType = get('item_type') || 'task';
+      if (itemType === 'subtask') { failed.push({ row: rowNum, title, error: 'Subtasks cannot be imported (need a parent).' }); return; }
+      if (!['epic', 'story', 'task', 'bug'].includes(itemType)) {
+        failed.push({ row: rowNum, title, error: `Invalid item_type "${itemType}".` }); return;
+      }
+
+      let statusId = defaultStatusId(board.project);
+      const statusName = get('status');
+      if (statusName) {
+        const match = statusesForProject(board.project).find(s => s.name.toLowerCase() === statusName.toLowerCase());
+        if (!match) { failed.push({ row: rowNum, title, error: `Status "${statusName}" not found.` }); return; }
+        statusId = match.id;
+      }
+
+      let priority = 2;
+      const priorityName = get('priority');
+      if (priorityName) {
+        if (!(priorityName.toLowerCase() in IMPORT_PRIORITY)) {
+          failed.push({ row: rowNum, title, error: `Invalid priority "${priorityName}".` }); return;
+        }
+        priority = IMPORT_PRIORITY[priorityName.toLowerCase()];
+      }
+
+      let assignee = null;
+      const assigneeName = get('assignee');
+      if (assigneeName) {
+        const match = users.find(u => u.username.toLowerCase() === assigneeName.toLowerCase());
+        if (!match) { failed.push({ row: rowNum, title, error: `User "${assigneeName}" not found.` }); return; }
+        assignee = match.id;
+      }
+
+      let dueDate = null;
+      const dueDateRaw = get('due_date');
+      if (dueDateRaw) {
+        if (!Logic.isIsoDate(dueDateRaw)) { failed.push({ row: rowNum, title, error: `Invalid due_date "${dueDateRaw}".` }); return; }
+        dueDate = dueDateRaw;
+      }
+
+      const labelNames = get('labels').split(';').map(s => s.trim()).filter(Boolean);
+      const resolvedLabels = labelNames.length ? resolveLabelNames(labelNames) : { ids: [] };
+      if (resolvedLabels.error) { failed.push({ row: rowNum, title, error: resolvedLabels.error.labels }); return; }
+
+      const componentNames = get('components').split(';').map(s => s.trim()).filter(Boolean);
+      const componentIds = [];
+      for (const name of componentNames) {
+        const match = components.find(c => c.project === board.project && c.name.toLowerCase() === name.toLowerCase());
+        if (!match) { failed.push({ row: rowNum, title, error: `Component "${name}" not found.` }); return; }
+        componentIds.push(match.id);
+      }
+
+      const siblings = workItems.filter(w => w.board === board.id && w.status === statusId);
+      seed({
+        id: id(), key: `${projectById(board.project).key}-${itemCounters[board.project]++}`,
+        board: board.id, item_type: itemType, title, description: get('description'),
+        status: statusId, position: siblings.length, priority, due_date: dueDate, assignee,
+        components: componentIds, labels: resolvedLabels.ids, created_by: me.id,
+      });
+      imported++;
+    });
+
+    return { imported, failed };
+  }
+
   /* ---- me -------------------------------------------------------------- */
 
   const listUsers = () => wait(users);
@@ -1638,5 +1854,6 @@ const Store = (() => {
     listComments, createComment, deleteComment,
     listUsers, myTasks,
     search,
+    bulkMoveWorkItems, bulkUpdateWorkItems, bulkDeleteWorkItems, importWorkItems,
   };
 })();

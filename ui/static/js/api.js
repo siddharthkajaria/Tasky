@@ -208,5 +208,30 @@ const Api = (() => {
       Object.entries(params || {}).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') qs.set(k, v); });
       return request(`/api/search/?${qs.toString()}`);
     },
+
+    /* Bulk operations & import ---------------------------------------------- */
+    bulkMoveWorkItems:   (ids, statusId) => request('/api/work-items/bulk-move/', { method: 'POST', body: { ids, status: statusId } }),
+    bulkUpdateWorkItems: (ids, fields)   => request('/api/work-items/bulk-update/', { method: 'POST', body: Object.assign({ ids }, fields) }),
+    bulkDeleteWorkItems: (ids)           => request('/api/work-items/bulk-delete/', { method: 'POST', body: { ids } }),
+    importWorkItems: async (boardId, csvFile) => {
+      const form = new FormData();
+      form.append('csv', csvFile);
+      const token = getCookie('csrftoken');
+      const res = await fetch(`/api/boards/${boardId}/import/`, {
+        method: 'POST',
+        headers: token ? { 'X-CSRFToken': token } : {},
+        credentials: 'same-origin',
+        body: form,
+      });
+      if (res.ok) return parseBody(res);
+      const data = await parseBody(res);
+      if (res.status === 403) {
+        const me = await fetch('/api/auth/me/', { credentials: 'same-origin' });
+        const err = Object.assign(new Error('Forbidden'), { status: 403, data });
+        err.sessionExpired = (me.status === 403);
+        throw err;
+      }
+      throw Object.assign(new Error('API ' + res.status), { status: res.status, data });
+    },
   };
 })();
