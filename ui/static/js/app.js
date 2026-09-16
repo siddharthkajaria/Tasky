@@ -232,7 +232,11 @@ async function viewProjects() {
     errorEl.hidden = true;
     const name = e.target.querySelector('[name=name]').value;
     const key = e.target.querySelector('[name=key]').value;
-    if (!name.trim() || !key.trim()) return;
+    if (!name.trim() || !key.trim()) {
+      errorEl.textContent = 'Project name and key are both required.';
+      errorEl.hidden = false;
+      return;
+    }
 
     btn.disabled = true;
     try {
