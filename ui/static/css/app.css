@@ -369,21 +369,46 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .board-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 
+/* The row itself is no longer the link — rename needs an input in the same
+   spot the link occupies, and an <input> inside an <a> fights the browser
+   over clicks. The link and the actions cluster are now siblings instead. */
 .board-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r);
   padding: 12px 15px;
-  text-decoration: none;
   animation: row-in .22s var(--ease-out) both;
   transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
 }
 .board-row:hover { border-color: var(--rule-2); box-shadow: 0 4px 14px rgba(var(--accent-rgb), .16); transform: translateY(-1px); }
+.board-row .board-link {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
 .board-row .name { font-weight: 500; }
 .board-row .desc { color: var(--ink-2); flex: 1; }
+.board-row-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.board-row-actions .btn-danger { padding: 3px 8px; font-size: 11px; }
+.board-rename-wrap { display: flex; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.board-rename-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-weight: 500;
+  background: var(--surface);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--r);
+  padding: 3px 7px;
+}
+.board-rename-wrap .form-error { margin: 0; padding: 3px 7px; }
 
 .component-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 7px; }
 .component-row {

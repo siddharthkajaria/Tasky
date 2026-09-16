@@ -107,6 +107,7 @@
 
     <section>
       <h2 class="section-label">Boards</h2>
+      <p class="page-sub section-note" data-boards-note></p>
       <form class="create-board" data-create-board novalidate>
         <input name="name" placeholder="Board name" aria-label="Board name" required>
         <button class="btn" type="submit">Create board</button>
@@ -124,7 +125,7 @@
       </form>
     </section>
 
-    <section>
+    <section id="statuses-section">
       <h2 class="section-label">Statuses</h2>
       <p class="page-sub section-note">The board's columns for this project, in order. Owner and Admins manage the list — each of To Do, In Progress and Done needs at least one status.</p>
       <ul class="order-list" data-statuses></ul>

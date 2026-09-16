@@ -945,23 +945,38 @@ function renderProjectActions(main, project) {
 async function renderBoards(main, project) {
   const list = main.querySelector('[data-boards]');
   const form = main.querySelector('[data-create-board]');
+  const note = main.querySelector('[data-boards-note]');
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const input = e.target.querySelector('[name=name]');
-    const btn = e.target.querySelector('button');
-    if (!input.value.trim()) return;
-    btn.disabled = true;
-    try {
-      const board = await data.createBoard({ project: project.id, name: input.value });
-      input.value = '';
-      location.hash = `#/projects/${project.id}/boards/${board.id}`;
-    } catch (err) {
-      handle(err);
-    } finally {
-      btn.disabled = false;
-    }
-  });
+  if (note) {
+    note.innerHTML = 'Columns are per-project, not per-board — need different ones? ' +
+      'Manage them in <a href="#" data-jump-statuses>Statuses</a> below.';
+    note.querySelector('[data-jump-statuses]').addEventListener('click', (e) => {
+      e.preventDefault();
+      main.querySelector('#statuses-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  /* renderBoards re-runs itself after a delete (same reason renderComponents
+     does), so the submit handler is attached once and only once. */
+  if (!form.dataset.wired) {
+    form.dataset.wired = '1';
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector('[name=name]');
+      const btn = e.target.querySelector('button');
+      if (!input.value.trim()) return;
+      btn.disabled = true;
+      try {
+        const board = await data.createBoard({ project: project.id, name: input.value });
+        input.value = '';
+        location.hash = `#/projects/${project.id}/boards/${board.id}`;
+      } catch (err) {
+        handle(err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 
   try {
     const boards = await data.listBoards(project.id);
@@ -969,23 +984,97 @@ async function renderBoards(main, project) {
       list.innerHTML = '<li class="empty">No boards yet. Name one above to get started.</li>';
       return;
     }
-    const rows = boards.map(b => {
-      const li = document.createElement('li');
-      const a = document.createElement('a');
-      a.className = 'board-row';
-      a.href = `#/projects/${project.id}/boards/${b.id}`;
-      a.innerHTML =
-        `<span class="name">${esc(b.name)}</span>` +
-        (b.description ? `<span class="desc">${esc(b.description)}</span>` : '');
-      li.appendChild(a);
-      return li;
-    });
+    const rows = boards.map(b => boardRow(b, project, main));
     list.replaceChildren(...rows);
     stagger(rows);
   } catch (err) {
     if (err && err.sessionExpired) return handle(err);
     errorState(list, err, () => renderBoards(main, project));
   }
+}
+
+/* One board row: a link to open the board, plus rename (click to reveal an
+   input; Enter/blur saves, Escape reverts, a `data-error` slot for a failed
+   PATCH) and delete. No role gate — BoardViewSet has none, any project
+   member may rename or delete a board, so neither control is conditional
+   on `project.my_role` the way Components/Releases/Statuses are. */
+function boardRow(board, project, main) {
+  const li = document.createElement('li');
+  li.className = 'board-row';
+
+  function draw() {
+    li.innerHTML =
+      `<a class="board-link" href="#/projects/${project.id}/boards/${board.id}">` +
+        `<span class="name">${esc(board.name)}</span>` +
+        (board.description ? `<span class="desc">${esc(board.description)}</span>` : '') +
+      `</a>` +
+      `<span class="board-row-actions">` +
+        `<button class="icon-btn" type="button" data-rename-toggle aria-label="Rename board">Rename</button>` +
+        `<button class="btn btn-danger" type="button" data-delete>Delete</button>` +
+      `</span>`;
+    li.querySelector('[data-rename-toggle]').addEventListener('click', startRename);
+    li.querySelector('[data-delete]').addEventListener('click', onDelete);
+  }
+
+  function startRename() {
+    const link = li.querySelector('.board-link');
+    const actions = li.querySelector('.board-row-actions');
+    actions.hidden = true;
+
+    const wrap = document.createElement('span');
+    wrap.className = 'board-rename-wrap';
+    wrap.innerHTML =
+      `<input type="text" class="board-rename-input" value="${esc(board.name)}" aria-label="Board name">` +
+      `<p class="form-error" data-error hidden></p>`;
+    link.replaceWith(wrap);
+
+    const input = wrap.querySelector('input');
+    const errorEl = wrap.querySelector('[data-error]');
+    input.focus();
+    input.select();
+
+    let cancelled = false;
+    const cancel = () => { cancelled = true; wrap.replaceWith(link); actions.hidden = false; };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', async () => {
+      if (cancelled) return;
+      const value = input.value.trim();
+      if (!value || value === board.name) { cancel(); return; }
+      try {
+        const updated = await data.updateBoard(board.id, { name: value });
+        board.name = updated.name;
+        toast('Board renamed');
+        draw();
+      } catch (err) {
+        if (err && err.sessionExpired) return handle(err);
+        errorEl.textContent = errorText(err);
+        errorEl.hidden = false;
+        input.focus();
+      }
+    });
+  }
+
+  async function onDelete() {
+    if (!confirm(
+      `Delete "${board.name}"? Its work items, comments, attachments and sprints go with it. This cannot be undone.`
+    )) return;
+    try {
+      await data.deleteBoard(board.id);
+      toast('Board deleted');
+      if (location.hash.startsWith(`#/projects/${project.id}/boards/${board.id}`)) {
+        location.hash = `#/projects/${project.id}`;
+      } else {
+        renderBoards(main, project);
+      }
+    } catch (err) { handle(err); }
+  }
+
+  draw();
+  return li;
 }
 
 /* Components ----------------------------------------------------------- */

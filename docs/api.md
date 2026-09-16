@@ -54,8 +54,13 @@ of record is unchanged; only login is blocked.
 |---|---|---|
 | GET | `/api/boards/` | every board in a project I'm a member of; unpaginated |
 | POST | `/api/boards/` | `{project, name, description?}`; `description` is optional; creator is taken from the session; `project` must be one I'm a member of |
-| GET/PUT/PATCH/DELETE | `/api/boards/{id}/` | |
+| GET/PUT/PATCH/DELETE | `/api/boards/{id}/` | any project member may rename or delete a board — there is no extra role check beyond membership and the project not being archived |
 | GET | `/api/boards/{id}/work-items/` | every work item on the board — see the ordering note below |
+
+**`DELETE /api/boards/{id}/` cascades** to the board's work items via `on_delete=CASCADE`,
+and from there to their comments, attachments and "relates to" links; the board's sprints
+are also deleted directly (`Sprint.board` is `CASCADE` too). Releases, components and
+labels are project-scoped, not board-scoped, so they are untouched.
 
 **Ordering of `/api/boards/{id}/work-items/` is NOT "grouped by column."** The queryset
 orders by `WorkItem.Meta.ordering = ["position", "id"]`, which is a single ordering

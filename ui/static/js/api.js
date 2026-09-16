@@ -89,6 +89,11 @@ const Api = (() => {
     listBoards,
     getBoard:    (id)     => request(`/api/boards/${id}/`),
     createBoard: (fields) => request('/api/boards/', { method: 'POST', body: fields }),
+    // No `project` change accepted — boards do not move between projects,
+    // same rule as `status`/`board` on WorkItem. A PATCH that echoes back
+    // the current, unchanged `project` alongside a real edit is fine.
+    updateBoard: (id, fields) => request(`/api/boards/${id}/`, { method: 'PATCH', body: fields }),
+    deleteBoard: (id)         => request(`/api/boards/${id}/`, { method: 'DELETE' }),
     getBoardWorkItems: (id) => request(`/api/boards/${id}/work-items/`),
 
     /* Work item statuses. Per-project and configurable (sub-project 3,

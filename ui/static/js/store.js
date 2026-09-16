@@ -649,6 +649,57 @@ const Store = (() => {
     return wait(boardOut(board));
   }
 
+  /* Any project member can rename or delete a board — deliberately no role
+     check here, mirroring BoardViewSet's real permission_classes
+     (IsAuthenticated, IsProjectMember, ProjectNotArchived; no role gate).
+     Check order matches every other mutation in this file: 404 (not found)
+     -> 403 (not a member) -> 403 (project archived) -> 400 (field
+     validation). */
+  function updateBoard(boardId, fields) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    if (!myRole(board.project)) return denied();
+    if (projectById(board.project).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+    // Same "echo-back-unchanged-is-fine, a real change is rejected" rule
+    // BoardViewSet.update applies to `project` on the real API.
+    if ('project' in fields && Number(fields.project) !== board.project) {
+      return fail(400, { project: 'Boards cannot be moved between projects.' });
+    }
+    if ('name' in fields) {
+      const trimmed = (fields.name || '').trim();
+      if (!trimmed) return fail(400, { name: 'This field may not be blank.' });
+      board.name = trimmed;
+    }
+    if ('description' in fields) board.description = fields.description || '';
+    board.updated_at = now();
+    return wait(boardOut(board));
+  }
+
+  function deleteBoard(boardId) {
+    const board = boardById(boardId);
+    if (!board) return fail(404, { detail: 'Not found.' });
+    if (!myRole(board.project)) return denied();
+    if (projectById(board.project).is_archived) {
+      return fail(403, { detail: 'This project is archived and read-only. Unarchive it first.' });
+    }
+    // Mirrors the real FK cascade (Board -> WorkItem -> Comment/Attachment/
+    // WorkItemLink, and Board -> Sprint directly) so the mock's other list
+    // functions agree with the real API about what survives a board delete.
+    const itemIds = workItems.filter(w => w.board === board.id).map(w => w.id);
+    const commentIds = comments.filter(c => itemIds.includes(c.card)).map(c => c.id);
+    workItems = workItems.filter(w => w.board !== board.id);
+    comments = comments.filter(c => !itemIds.includes(c.card));
+    attachments = attachments.filter(a =>
+      !(a.work_item && itemIds.includes(a.work_item)) && !(a.comment && commentIds.includes(a.comment))
+    );
+    links = links.filter(l => !itemIds.includes(l.item_a) && !itemIds.includes(l.item_b));
+    sprints = sprints.filter(s => s.board !== board.id);
+    boards = boards.filter(b => b.id !== board.id);
+    return wait(null);
+  }
+
   /* Every work item on the board in ONE position-ordered list across every
      status — interleaved, exactly like the real endpoint. */
   function getBoardWorkItems(boardId) {
@@ -2202,7 +2253,7 @@ const Store = (() => {
     listMembers, removeMember, changeRole, transferOwnership, inviteMember,
     archiveProject, unarchiveProject,
     listMyInvitations, acceptInvitation, declineInvitation,
-    listBoards, getBoard, createBoard, getBoardWorkItems,
+    listBoards, getBoard, createBoard, updateBoard, deleteBoard, getBoardWorkItems,
     listStatuses, createStatus, updateStatus, deleteStatus,
     getWorkItem, createWorkItem, updateWorkItem, deleteWorkItem, postMove, listChildren,
     listComponents, createComponent, renameComponent, deleteComponent,
