@@ -647,7 +647,19 @@ function statusRow(status, i, all, main, project) {
 
   const categoryEl = li.querySelector('[data-category]');
   if (categoryEl) {
-    categoryEl.addEventListener('change', () => run(() => data.updateStatus(project.id, status.id, { category: categoryEl.value })));
+    /* Own try/catch rather than run(): a rejected category change (e.g. the
+       last status in a category) must snap the <select> back to the status's
+       real category, the same way the rename handler below reverts nameEl —
+       run()'s catch only surfaces the error, it never re-renders. */
+    categoryEl.addEventListener('change', async () => {
+      try {
+        await data.updateStatus(project.id, status.id, { category: categoryEl.value });
+        await renderStatuses(main, project);
+      } catch (err) {
+        categoryEl.value = status.category;
+        handle(err);
+      }
+    });
   }
 
   const nameEl = li.querySelector('[data-rename]');
