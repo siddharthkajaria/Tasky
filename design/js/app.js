@@ -141,6 +141,11 @@ function setActiveNav(key) {
 
 function route() {
   if (!me) return;
+  // The work item panel doesn't block the board the way the old centered
+  // modal did, so navigating away from the board without closing it first
+  // is now actually reachable (a breadcrumb, a nav link) — close it here
+  // rather than leaving it floating over whatever page comes next.
+  if (openItemPanel) openItemPanel.close();
   const hash = location.hash.replace(/^#/, '') || '/projects';
 
   // Fields and Screens are global objects, not project-scoped ones, so they
@@ -1130,8 +1135,11 @@ async function renderPendingInvites(main, projectId, myRole) {
 
 /* Modals — a shared open/close lifecycle so every dialog animates the
    same way and Escape/backdrop-click always work the same way. Modals can
-   nest (the work item modal opens a link picker on top of itself), so
-   Escape only ever closes the topmost one. -------------------------- */
+   nest (the Link picker opens on top of an invite modal's parent flow, for
+   instance), so Escape only ever closes the topmost one. The work item
+   panel further below (openPanel) shares this same `modalStack` for
+   exactly that reason — it opens a link picker on top of itself too, just
+   through a different, non-modal container. -------------------------- */
 
 const modalStack = [];
 
@@ -1166,6 +1174,66 @@ function openModal(bodyHtml) {
 
   modalStack.push(close);
   return { modal, close };
+}
+
+/* Panel — a right-docked slide-over for the work item detail view (Jira-
+   classic style), parallel to openModal above but deliberately NOT built
+   on it: there's no full-viewport .scrim, so the board stays visible and
+   interactive to the panel's left, and there's no click-outside-to-close
+   since there's no scrim to click. It shares openModal's `modalStack`
+   discipline rather than keeping a second, competing one — a sub-dialog
+   opened from inside the panel (the link picker, say) pushes its own close
+   on top of the same stack, so Escape always closes whichever is topmost
+   first, panel included.
+
+   `replace(newBodyHtml)` swaps the panel's content in place — used for
+   "navigate to a different item" (a child/parent/linked item clicked from
+   inside the panel, or a different card clicked on the board while a panel
+   is already open) — without re-running the slide-in animation or
+   flashing a closed state. Because it fully replaces the DOM subtree
+   rather than patching it, whatever event listeners were attached to the
+   old content go away with the old nodes; the caller just wires the new
+   content fresh, with no risk of old listeners lingering or firing twice. */
+
+function openPanel(bodyHtml, onClose) {
+  const host = document.createElement('div');
+  host.className = 'panel-host';
+
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+
+  host.appendChild(panel);
+  document.body.appendChild(host);
+  requestAnimationFrame(() => host.classList.add('is-open'));
+
+  function bindClose() {
+    panel.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', close));
+  }
+
+  function close() {
+    host.classList.remove('is-open');
+    document.removeEventListener('keydown', onKey);
+    setTimeout(() => host.remove(), 180);
+    const idx = modalStack.indexOf(close);
+    if (idx !== -1) modalStack.splice(idx, 1);
+    if (onClose) onClose();
+  }
+  function onKey(e) {
+    if (e.key === 'Escape' && modalStack[modalStack.length - 1] === close) close();
+  }
+  document.addEventListener('keydown', onKey);
+  modalStack.push(close);
+
+  function replace(newBodyHtml) {
+    panel.innerHTML = newBodyHtml;
+    bindClose();
+    return panel;
+  }
+
+  replace(bodyHtml);
+  return { panel, close, replace };
 }
 
 async function openInviteModal(project) {
@@ -2726,6 +2794,19 @@ function addWorkItemControl(status) {
 
 /* Work item detail modal -------------------------------------------------- */
 
+// The single work item panel open at a time. A click on a *different*
+// board card, or on a child/parent/linked item from inside the panel
+// itself, reuses and replaces it in place (openPanel's `replace`, above)
+// instead of closing and reopening — no re-triggered slide-in, no flash of
+// a closed state. Tracking one module-level handle rather than threading
+// it through every call site is a judgment call: the brief's own example
+// is "click a child to navigate to item B in place", but with the board
+// now staying interactive behind the panel, clicking a *different* card on
+// the board while one is already open is just as reachable and wants the
+// identical treatment — a single tracked reference covers both without a
+// call site needing to know whether a panel already happens to be open.
+let openItemPanel = null;
+
 async function openWorkItemModal(itemId) {
   let item, users, projectComponents, boardItems, members, allLabels, projectReleases;
   try {
@@ -2745,26 +2826,7 @@ async function openWorkItemModal(itemId) {
   catch (err) { screen = null; }
   const screenRows = screen ? screen.fields : [];
   const screenFieldIds = new Set(screenRows.map(r => r.field.id));
-  const orphanedDetails = (item.custom_field_details || []).filter(d => !screenFieldIds.has(d.field.id));
-
-  const customFieldsHtml = screenRows.length
-    ? `<div class="custom-fields-block">
-        <h2>Custom fields</h2>
-        <div class="cf-grid">${customFieldControls(screenRows, item.custom_fields, members)}</div>
-      </div>`
-    : '';
-  const orphanedHtml = orphanedDetails.length
-    ? `<div class="custom-fields-block">
-        <h2>Other saved values</h2>
-        <ul class="cf-orphan-list">${orphanedDetails.map(d =>
-          `<li><span>${esc(d.field.name)}</span><span>${esc(d.display)}</span></li>`
-        ).join('')}</ul>
-      </div>`
-    : '';
-
-  const assigneeOptions = users.map(u =>
-    `<option value="${u.id}" ${item.assignee === u.id ? 'selected' : ''}>${esc(u.display_name)}</option>`
-  ).join('');
+  const showParentField = Logic.canHaveParent(item.item_type);
 
   const componentChips = projectComponents.map(c => {
     const checked = item.component_ids.includes(c.id);
@@ -2779,73 +2841,128 @@ async function openWorkItemModal(itemId) {
       ).join('')}</ul>`
     : `<p class="empty-inline">No children yet.</p>`;
 
-  const showParentField = Logic.canHaveParent(item.item_type);
-  const parentOptions = showParentField
-    ? boardItems
-        .filter(i => i.id !== item.id && Logic.VALID_PARENT_TYPES[item.item_type].includes(i.item_type))
-        .map(i => `<option value="${i.id}" ${item.parent === i.id ? 'selected' : ''}>${esc(i.key)} — ${esc(i.title)}</option>`)
-        .join('')
-    : '';
+  /* ---- Show mode: everything below rendered as plain text/tags, no
+     inputs — reads `item` fresh at paint time, so it always reflects
+     whatever was last actually saved, never an in-progress edit. ---- */
+  function showFieldsHtml() {
+    const priorityLabel = item.priority_label || { 1: 'Low', 2: 'Medium', 3: 'High' }[item.priority];
+    const assigneeName = item.assignee_detail ? esc(item.assignee_detail.display_name) : 'Unassigned';
+    const releaseName = item.release_detail ? esc(item.release_detail.name) : 'No release';
+    const parentLabel = item.parent_detail
+      ? `${esc(item.parent_detail.key)} — ${esc(item.parent_detail.title)}` : 'No parent';
+    const cfDetails = item.custom_field_details || [];
 
-  // Any project member can tag a work item with an existing release — an
-  // ordinary edit, same tier as Status/Priority/Assignee, not gated behind
-  // the Owner/Admin check that creating or renaming one requires.
-  const releaseOptions = projectReleases.map(r =>
-    `<option value="${r.id}" ${item.release === r.id ? 'selected' : ''}>${esc(r.name)} — ${Logic.RELEASE_STATUS_LABEL[r.status]}</option>`
-  ).join('');
+    return `
+      <p class="wi-title-view">${esc(item.title)}</p>
+      <div class="wi-description-view">${
+        item.description ? esc(item.description) : '<span class="empty-inline">No description.</span>'
+      }</div>
+      <ul class="wi-view-fields">
+        <li><span>Status</span><span class="status-tag">${item.status_detail ? esc(item.status_detail.name) : ''}</span></li>
+        <li><span>Priority</span><span>${esc(priorityLabel)}</span></li>
+        <li><span>Assignee</span><span>${assigneeName}</span></li>
+        <li><span>Due</span><span>${item.due_date ? esc(item.due_date) : 'No due date'}</span></li>
+        <li><span>Release</span><span>${releaseName}</span></li>
+        ${showParentField ? `<li><span>Parent</span><span>${parentLabel}</span></li>` : ''}
+      </ul>
+      ${cfDetails.length ? `
+      <div class="custom-fields-block">
+        <h2>Custom fields</h2>
+        <ul class="cf-orphan-list">${cfDetails.map(d =>
+          `<li><span>${esc(d.field.name)}</span><span>${esc(d.display)}</span></li>`
+        ).join('')}</ul>
+      </div>` : ''}`;
+  }
 
-  const body = `
-    <div class="modal-head">
-      <p class="eyebrow">${esc(item.key)} · <span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span></p>
-      <button class="btn btn-quiet" data-close>Close</button>
-    </div>
-    <input class="modal-title" name="title" value="${esc(item.title)}" aria-label="Title">
-    <label class="field">
-      <span>Description</span>
-      <textarea name="description" placeholder="What does done look like?">${esc(item.description)}</textarea>
-    </label>
-    <div class="grid-3">
+  /* ---- Edit mode: the same form this modal always had for these fields —
+     recomputed fresh from `item` on every paint (not just on first open),
+     since Save re-enters Show mode without closing the panel, and a second
+     Edit session later in the same visit needs current, not stale, data. */
+  function editFieldsHtml() {
+    const orphanedDetails = (item.custom_field_details || []).filter(d => !screenFieldIds.has(d.field.id));
+    const assigneeOptions = users.map(u =>
+      `<option value="${u.id}" ${item.assignee === u.id ? 'selected' : ''}>${esc(u.display_name)}</option>`
+    ).join('');
+    const parentOptions = showParentField
+      ? boardItems
+          .filter(i => i.id !== item.id && Logic.VALID_PARENT_TYPES[item.item_type].includes(i.item_type))
+          .map(i => `<option value="${i.id}" ${item.parent === i.id ? 'selected' : ''}>${esc(i.key)} — ${esc(i.title)}</option>`)
+          .join('')
+      : '';
+    // Any project member can tag a work item with an existing release — an
+    // ordinary edit, same tier as Status/Priority/Assignee, not gated
+    // behind the Owner/Admin check that creating or renaming one requires.
+    const releaseOptions = projectReleases.map(r =>
+      `<option value="${r.id}" ${item.release === r.id ? 'selected' : ''}>${esc(r.name)} — ${Logic.RELEASE_STATUS_LABEL[r.status]}</option>`
+    ).join('');
+    const customFieldsHtml = screenRows.length
+      ? `<div class="custom-fields-block">
+          <h2>Custom fields</h2>
+          <div class="cf-grid">${customFieldControls(screenRows, item.custom_fields, members)}</div>
+        </div>`
+      : '';
+    const orphanedHtml = orphanedDetails.length
+      ? `<div class="custom-fields-block">
+          <h2>Other saved values</h2>
+          <ul class="cf-orphan-list">${orphanedDetails.map(d =>
+            `<li><span>${esc(d.field.name)}</span><span>${esc(d.display)}</span></li>`
+          ).join('')}</ul>
+        </div>`
+      : '';
+
+    return `
+      <input class="modal-title" name="title" value="${esc(item.title)}" aria-label="Title">
       <label class="field">
-        <span>Status</span>
-        <select name="status">${(boardState.statuses || []).map(s =>
-          `<option value="${s.id}" ${item.status === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+        <span>Description</span>
+        <textarea name="description" placeholder="What does done look like?">${esc(item.description)}</textarea>
       </label>
-      <label class="field">
-        <span>Priority</span>
-        <select name="priority">
-          <option value="1" ${item.priority === 1 ? 'selected' : ''}>Low</option>
-          <option value="2" ${item.priority === 2 ? 'selected' : ''}>Medium</option>
-          <option value="3" ${item.priority === 3 ? 'selected' : ''}>High</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Assignee</span>
-        <select name="assignee"><option value="">Unassigned</option>${assigneeOptions}</select>
-      </label>
-    </div>
-    <div class="grid-3">
-      <label class="field">
-        <span>Due</span>
-        <input type="date" name="due_date" value="${item.due_date || ''}">
-      </label>
-      <label class="field">
-        <span>Release</span>
-        <select name="release"><option value="">No release</option>${releaseOptions}</select>
-      </label>
-      ${showParentField ? `
-      <label class="field">
-        <span>Parent ${Logic.requiresParent(item.item_type) ? '(required)' : ''}</span>
-        <select name="parent"><option value="">No parent</option>${parentOptions}</select>
-      </label>` : '<div></div>'}
-    </div>
-    ${customFieldsHtml}
-    ${orphanedHtml}
-    <p class="form-error" data-error hidden></p>
-    <div class="modal-actions">
-      <button class="btn btn-primary" data-save>Save changes</button>
-      <button class="btn" data-close>Cancel</button>
-      <button class="btn btn-danger" data-delete>Delete</button>
-    </div>
+      <div class="grid-3">
+        <label class="field">
+          <span>Status</span>
+          <select name="status">${(boardState.statuses || []).map(s =>
+            `<option value="${s.id}" ${item.status === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+        </label>
+        <label class="field">
+          <span>Priority</span>
+          <select name="priority">
+            <option value="1" ${item.priority === 1 ? 'selected' : ''}>Low</option>
+            <option value="2" ${item.priority === 2 ? 'selected' : ''}>Medium</option>
+            <option value="3" ${item.priority === 3 ? 'selected' : ''}>High</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Assignee</span>
+          <select name="assignee"><option value="">Unassigned</option>${assigneeOptions}</select>
+        </label>
+      </div>
+      <div class="grid-3">
+        <label class="field">
+          <span>Due</span>
+          <input type="date" name="due_date" value="${item.due_date || ''}">
+        </label>
+        <label class="field">
+          <span>Release</span>
+          <select name="release"><option value="">No release</option>${releaseOptions}</select>
+        </label>
+        ${showParentField ? `
+        <label class="field">
+          <span>Parent ${Logic.requiresParent(item.item_type) ? '(required)' : ''}</span>
+          <select name="parent"><option value="">No parent</option>${parentOptions}</select>
+        </label>` : '<div></div>'}
+      </div>
+      ${customFieldsHtml}
+      ${orphanedHtml}
+      <p class="form-error" data-error hidden></p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" type="button" data-save>Save changes</button>
+        <button class="btn" type="button" data-cancel>Cancel</button>
+        <button class="btn btn-danger" type="button" data-delete>Delete</button>
+      </div>`;
+  }
+
+  const shellHtml = `
+    <div class="panel-head" data-panel-head></div>
+    <div data-core-fields></div>
 
     <div class="components-block">
       <h2>Components</h2>
@@ -2876,87 +2993,146 @@ async function openWorkItemModal(itemId) {
         <button class="btn" type="submit">Upload</button>
       </form>
       <p class="form-error" data-attachment-error hidden></p>
+    </div>
+
+    <div class="comments-block">
+      <h2>Comments</h2>
+      <ul class="comment-list" data-comments><li class="loading">Loading…</li></ul>
+      <form class="comment-form" data-comment-form>
+        <input name="body" placeholder="Add a comment" aria-label="Comment">
+        <input type="file" data-comment-file aria-label="Attach a file to this comment (optional)">
+        <button class="btn" type="submit">Post</button>
+      </form>
     </div>`;
 
-  const { modal, close } = openModal(body);
-  const errorEl = modal.querySelector('[data-error]');
+  // Reuse the single open panel (a different card clicked on the board, or
+  // a child/parent/link clicked from inside this one) rather than stacking
+  // a second one; only open a fresh one if none is open yet.
+  const panel = openItemPanel
+    ? openItemPanel.replace(shellHtml)
+    : (openItemPanel = openPanel(shellHtml, () => { openItemPanel = null; })).panel;
+  const panelHandle = openItemPanel;
+
+  let mode = 'show';
+  const headerEl = panel.querySelector('[data-panel-head]');
+  const coreFieldsEl = panel.querySelector('[data-core-fields]');
+
+  function paintHeader() {
+    headerEl.innerHTML =
+      `<p class="eyebrow">${esc(item.key)} · <span class="type-badge type-${item.item_type}">${Logic.ITEM_TYPE_LABEL[item.item_type]}</span></p>` +
+      `<div class="panel-head-actions">` +
+        (mode === 'show' ? `<button class="btn" type="button" data-edit>Edit</button>` : '') +
+        `<button class="btn btn-quiet" type="button" data-close>Close</button>` +
+      `</div>`;
+    headerEl.querySelector('[data-close]').addEventListener('click', panelHandle.close);
+    const editBtn = headerEl.querySelector('[data-edit]');
+    if (editBtn) editBtn.addEventListener('click', () => { mode = 'edit'; paintHeader(); paintCoreFields(); });
+  }
+
+  // Only this + paintHeader repaint on a Show/Edit toggle — Components,
+  // Labels, Children, Links, Attachments and Comments below are wired once
+  // per open/navigation and never touched by it, so an in-progress comment
+  // draft or upload isn't lost just because the user also clicked Edit.
+  function paintCoreFields() {
+    coreFieldsEl.innerHTML = mode === 'edit' ? editFieldsHtml() : showFieldsHtml();
+    bindChipChecks(coreFieldsEl); // multiselect/checkbox custom-field chips, edit mode only
+    if (mode !== 'edit') return;
+
+    coreFieldsEl.querySelector('[data-cancel]').addEventListener('click', () => {
+      // Discards whatever's in the form — `item` itself was never mutated
+      // by editing, so re-painting Show mode from it shows the ORIGINAL
+      // pre-edit values, not the abandoned in-progress ones.
+      mode = 'show';
+      paintHeader();
+      paintCoreFields();
+    });
+
+    const errorEl = coreFieldsEl.querySelector('[data-error]');
+    coreFieldsEl.querySelector('[data-save]').addEventListener('click', async () => {
+      errorEl.hidden = true;
+      clearCustomFieldErrors(coreFieldsEl);
+      const componentIds = Array.from(panel.querySelectorAll('.components-block .chip-check input:checked')).map(i => Number(i.value));
+      const parentSelect = coreFieldsEl.querySelector('[name=parent]');
+      const fields = {
+        title: coreFieldsEl.querySelector('[name=title]').value,
+        description: coreFieldsEl.querySelector('[name=description]').value,
+        status: coreFieldsEl.querySelector('[name=status]').value,
+        priority: Number(coreFieldsEl.querySelector('[name=priority]').value),
+        due_date: coreFieldsEl.querySelector('[name=due_date]').value || null,
+        assignee: coreFieldsEl.querySelector('[name=assignee]').value || null,
+        release: coreFieldsEl.querySelector('[name=release]').value || null,
+        component_ids: componentIds,
+        labels: labelInput.getNames(),
+      };
+      if (parentSelect) fields.parent = parentSelect.value || null;
+      if (screenRows.length) fields.custom_fields = readCustomFieldInputs(coreFieldsEl, screenRows);
+      try {
+        // Reassign `item` to the freshly saved values, then repaint Show
+        // mode from it — no close, no full board-modal round trip.
+        item = await Store.updateWorkItem(item.id, fields);
+        mode = 'show';
+        paintHeader();
+        paintCoreFields();
+        await reloadBoard();
+        toast('Saved');
+      } catch (err) {
+        if (err.field === 'custom_fields') {
+          applyCustomFieldErrors(coreFieldsEl, err.errors);
+        } else {
+          errorEl.textContent = errorText(err);
+          errorEl.hidden = false;
+        }
+      }
+    });
+
+    coreFieldsEl.querySelector('[data-delete]').addEventListener('click', async () => {
+      try {
+        await Store.deleteWorkItem(item.id);
+        panelHandle.close();
+        await reloadBoard();
+        toast('Deleted — any children were kept, just unlinked from it');
+      } catch (err) { handle(err); }
+    });
+  }
 
   const labelInput = labelChipInput((item.labels_detail || []).map(l => l.name), allLabels);
-  modal.querySelector('[data-labels-container]').replaceChildren(labelInput.el);
+  panel.querySelector('[data-labels-container]').replaceChildren(labelInput.el);
 
-  modal.querySelectorAll('.chip-check').forEach(chip => {
+  panel.querySelectorAll('.components-block .chip-check').forEach(chip => {
     const input = chip.querySelector('input');
     input.addEventListener('change', () => chip.classList.toggle('is-checked', input.checked));
   });
 
-  modal.querySelectorAll('[data-open-item]').forEach(a => {
+  panel.querySelectorAll('[data-open-item]').forEach(a => {
     a.addEventListener('click', (e) => {
       e.preventDefault();
-      const childId = Number(a.dataset.openItem);
-      close();
-      openWorkItemModal(childId);
+      // No `close()` — openWorkItemModal finds this same panel via
+      // `openItemPanel` and replaces its content in place.
+      openWorkItemModal(Number(a.dataset.openItem));
     });
   });
 
-  modal.querySelector('[data-save]').addEventListener('click', async () => {
-    errorEl.hidden = true;
-    clearCustomFieldErrors(modal);
-    const componentIds = Array.from(modal.querySelectorAll('.components-block .chip-check input:checked')).map(i => Number(i.value));
-    const parentSelect = modal.querySelector('[name=parent]');
-    const fields = {
-      title: modal.querySelector('[name=title]').value,
-      description: modal.querySelector('[name=description]').value,
-      status: modal.querySelector('[name=status]').value,
-      priority: Number(modal.querySelector('[name=priority]').value),
-      due_date: modal.querySelector('[name=due_date]').value || null,
-      assignee: modal.querySelector('[name=assignee]').value || null,
-      release: modal.querySelector('[name=release]').value || null,
-      component_ids: componentIds,
-      labels: labelInput.getNames(),
-    };
-    if (parentSelect) fields.parent = parentSelect.value || null;
-    if (screenRows.length) fields.custom_fields = readCustomFieldInputs(modal, screenRows);
-    try {
-      await Store.updateWorkItem(item.id, fields);
-      close();
-      await reloadBoard();
-      toast('Saved');
-    } catch (err) {
-      if (err.field === 'custom_fields') {
-        applyCustomFieldErrors(modal, err.errors);
-      } else {
-        errorEl.textContent = errorText(err);
-        errorEl.hidden = false;
-      }
-    }
-  });
+  paintHeader();
+  paintCoreFields();
 
-  modal.querySelector('[data-delete]').addEventListener('click', async () => {
-    try {
-      await Store.deleteWorkItem(item.id);
-      close();
-      await reloadBoard();
-      toast('Deleted — any children were kept, just unlinked from it');
-    } catch (err) { handle(err); }
-  });
-
-  loadLinks(item, modal);
-  modal.querySelector('[data-add-link]').addEventListener('click', () => openLinkModal(item, modal));
+  loadLinks(item, panel);
+  panel.querySelector('[data-add-link]').addEventListener('click', () => openLinkModal(item, panel));
 
   // Delete permission is per-attachment (uploader OR Owner/Admin), not a
   // single section-wide flag like Components/Releases get — but it still
   // needs "my role on this item's project", which `members` (already
-  // fetched above) already carries without a second network call.
+  // fetched above) already carries without a second network call. Also
+  // used by Comments below, since Comment delete needs a role lookup too.
   const myMembership = members.find(m => m.user === me.id);
   const myRole = myMembership ? myMembership.role : null;
 
-  loadAttachments(item, modal, myRole);
+  loadAttachments(item, panel, myRole);
 
-  const attachmentForm = modal.querySelector('[data-attachment-form]');
+  const attachmentForm = panel.querySelector('[data-attachment-form]');
   attachmentForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const fileInput = modal.querySelector('[data-attachment-file]');
-    const attachmentError = modal.querySelector('[data-attachment-error]');
+    const fileInput = panel.querySelector('[data-attachment-file]');
+    const attachmentError = panel.querySelector('[data-attachment-error]');
     attachmentError.hidden = true;
     const file = fileInput.files[0];
     if (!file) {
@@ -2975,13 +3151,38 @@ async function openWorkItemModal(itemId) {
       attachmentBlobUrls.set(created.id, URL.createObjectURL(file));
       attachmentForm.reset();
       toast('Uploaded');
-      loadAttachments(item, modal, myRole);
+      loadAttachments(item, panel, myRole);
     } catch (err) {
       attachmentError.textContent = errorText(err);
       attachmentError.hidden = false;
     } finally {
       submitBtn.disabled = false;
     }
+  });
+
+  loadComments(item.id, panel, myRole);
+  panel.querySelector('[data-comment-form]').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = e.target.querySelector('[name=body]');
+    const fileInput = e.target.querySelector('[data-comment-file]');
+    if (!input.value.trim()) return;
+    try {
+      const posted = await Store.createComment(item.id, input.value);
+      input.value = '';
+      const file = fileInput.files[0];
+      fileInput.value = '';
+      if (file) {
+        try {
+          const createdAttachment = await Store.uploadCommentAttachment(posted.id, {
+            filename: file.name, content_type: file.type, size: file.size,
+          });
+          attachmentBlobUrls.set(createdAttachment.id, URL.createObjectURL(file));
+        } catch (err) {
+          toast('Comment posted, but the attachment failed to upload');
+        }
+      }
+      loadComments(item.id, panel, myRole);
+    } catch (err) { handle(err); }
   });
 }
 
@@ -2993,14 +3194,21 @@ async function loadAttachments(item, modal, myRole) {
       list.innerHTML = '<li class="empty-inline">No attachments yet.</li>';
       return;
     }
-    list.replaceChildren(...rows.map(a => attachmentRow(a, item, modal, myRole)));
+    list.replaceChildren(...rows.map(a => attachmentRow(a, () => loadAttachments(item, modal, myRole), myRole)));
   } catch (err) {
     list.innerHTML = '';
     handle(err);
   }
 }
 
-function attachmentRow(a, item, modal, myRole) {
+// Shared between work-item attachments and comment attachments (below) —
+// the two lists differ only in where they're fetched from
+// (Store.listAttachments vs Store.listCommentAttachments), never in how a
+// row looks or how delete permission is decided, so this renderer takes a
+// `reload` callback instead of an `item`/`modal` pair and knows nothing
+// about which parent it's on. Mirrors ui/static/js/app.js's identical
+// refactor of this same function for the identical reason.
+function attachmentRow(a, reload, myRole) {
   const li = document.createElement('li');
   li.className = 'attachment-row';
   const uploader = a.uploaded_by_detail
@@ -3030,11 +3238,107 @@ function attachmentRow(a, item, modal, myRole) {
         await Store.deleteAttachment(a.id);
         attachmentBlobUrls.delete(a.id);
         toast('Attachment deleted');
-        loadAttachments(item, modal, myRole);
+        reload();
       } catch (err) { handle(err); }
     });
   }
   return li;
+}
+
+/* Comments ---------------------------------------------------------------
+   New in this branch: design/ never had Comments at all (see the note
+   above Store's seed data in store.js), even though production (ui/) has
+   had them, including comment attachments, for a while. Mirrors
+   ui/static/js/app.js's loadComments/commentEl/loadCommentAttachments
+   structure closely — same markup, same reuse of attachmentRow above for
+   a comment's own attachments — just without an exhaustive permission
+   matrix, matching how the rest of this file's Attachments section is
+   already proportioned for a prototype rather than a contract-accurate
+   implementation. No comment editing here, matching what's actually live
+   in production today. */
+
+async function loadComments(itemId, panel, myRole) {
+  const list = panel.querySelector('[data-comments]');
+  if (!list) return;
+  try {
+    const comments = await Store.listComments(itemId);
+    if (!comments.length) {
+      list.innerHTML = '<li class="empty-inline">No comments yet. Explain the tricky part here.</li>';
+      return;
+    }
+    list.replaceChildren(...comments.map(c => commentEl(c, itemId, panel, myRole)));
+  } catch (err) {
+    list.innerHTML = '';
+    handle(err);
+  }
+}
+
+function commentEl(comment, itemId, panel, myRole) {
+  const li = document.createElement('li');
+  li.className = 'comment';
+  const author = comment.author
+    ? esc(comment.author.display_name || comment.author.username)
+    : 'Deleted user';
+  // An authorless comment (its author's account is gone) is deletable by
+  // any member, exactly like the real endpoint and Store.deleteComment.
+  const mine = !comment.author || (me && comment.author.id === me.id);
+
+  li.innerHTML =
+    `<div class="comment-head">` +
+      `<span class="author">${author}</span>` +
+      `<time datetime="${esc(comment.created_at)}">${esc(String(comment.created_at).slice(0, 10))}</time>` +
+      (mine ? `<button class="btn btn-danger" type="button" data-del>Delete</button>` : '') +
+    `</div>` +
+    `<p class="comment-body">${esc(comment.body)}</p>` +
+    `<ul class="attachment-list" data-comment-attachments><li class="loading">Loading…</li></ul>` +
+    `<button class="btn btn-quiet" type="button" data-attach-comment>+ Attach</button>` +
+    `<input type="file" data-comment-attach-file hidden>`;
+
+  const del = li.querySelector('[data-del]');
+  if (del) del.addEventListener('click', async () => {
+    try {
+      await Store.deleteComment(comment.id);
+      loadComments(itemId, panel, myRole);
+    } catch (err) { handle(err); }
+  });
+
+  const attachmentsEl = li.querySelector('[data-comment-attachments]');
+  loadCommentAttachments(comment.id, attachmentsEl, myRole);
+
+  const attachFileInput = li.querySelector('[data-comment-attach-file]');
+  li.querySelector('[data-attach-comment]').addEventListener('click', () => attachFileInput.click());
+  attachFileInput.addEventListener('change', async () => {
+    const file = attachFileInput.files[0];
+    attachFileInput.value = '';
+    if (!file) return;
+    try {
+      const created = await Store.uploadCommentAttachment(comment.id, {
+        filename: file.name, content_type: file.type, size: file.size,
+      });
+      attachmentBlobUrls.set(created.id, URL.createObjectURL(file));
+      toast('Uploaded');
+      loadCommentAttachments(comment.id, attachmentsEl, myRole);
+    } catch (err) { handle(err); }
+  });
+
+  return li;
+}
+
+async function loadCommentAttachments(commentId, container, myRole) {
+  if (!container) return;
+  try {
+    const rows = await Store.listCommentAttachments(commentId);
+    if (!rows.length) {
+      container.innerHTML = '<li class="empty-inline">No attachments yet.</li>';
+      return;
+    }
+    container.replaceChildren(
+      ...rows.map(a => attachmentRow(a, () => loadCommentAttachments(commentId, container, myRole), myRole))
+    );
+  } catch (err) {
+    container.innerHTML = '';
+    handle(err);
+  }
 }
 
 async function loadLinks(item, modal) {
