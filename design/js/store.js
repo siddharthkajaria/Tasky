@@ -251,12 +251,27 @@ const Store = (() => {
     },
   ];
 
+  // Comments — backfilling this prototype, which never got Comments support
+  // even though it's been live in production (ui/) for a while, including
+  // comment attachments. Two seeded on the Epic so a reviewer sees a real
+  // thread without posting anything first; the first one carries a seeded
+  // attachment too (below), so that renders unprompted as well.
+  const epicComment1 = { id: id(), work_item: epic.id, author: 2,
+    body: 'Kicked this off — the welcome screen is the long pole.',
+    created_at: '2026-08-09T09:12:00.000Z' };
+  const epicComment2 = { id: id(), work_item: epic.id, author: 1,
+    body: 'Agreed. Splitting the copy out as a subtask.',
+    created_at: '2026-08-09T14:40:00.000Z' };
+  let comments = [epicComment1, epicComment2];
+
   // Attachments (sub-project 8) seed data ----------------------------------
   // One on the Epic (uploaded by Asha, Owner), one on the Bug (uploaded by
   // Kabir, Admin), one on a Task (uploaded by Lena, plain member) — enough
   // to walk through "uploader deletes their own", "a different plain
   // member can't delete someone else's", and "Owner/Admin deletes anyone's"
-  // straight from the seed, without uploading anything first.
+  // straight from the seed, without uploading anything first. The last one
+  // is a comment attachment (`comment` set, no `work_item`) rather than a
+  // work-item one, exactly like the real, shared Attachment model.
   let attachments = [
     {
       id: id(), work_item: epic.id, filename: 'spec.pdf', content_type: 'application/pdf',
@@ -270,6 +285,10 @@ const Store = (() => {
       id: id(), work_item: task1.id, filename: 'design-notes.docx',
       content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       size: 20548, uploaded_by: 3, uploaded_at: '2026-08-17T11:30:00.000Z',
+    },
+    {
+      id: id(), comment: epicComment1.id, filename: 'welcome-flow.png', content_type: 'image/png',
+      size: 84213, uploaded_by: 2, uploaded_at: '2026-08-09T09:15:00.000Z',
     },
   ];
 
@@ -823,7 +842,13 @@ const Store = (() => {
     workItems = workItems.filter(w => w.id !== item.id);
     links = links.filter(l => l.item_a !== item.id && l.item_b !== item.id);
     workItemFieldValues = workItemFieldValues.filter(v => v.work_item !== item.id);
-    attachments = attachments.filter(a => a.work_item !== item.id);
+    // Mirrors the real FK cascade (WorkItem -> Comment/Attachment) — a
+    // comment's own attachments have to go too, not just the work item's.
+    const deletedCommentIds = comments.filter(c => c.work_item === item.id).map(c => c.id);
+    comments = comments.filter(c => c.work_item !== item.id);
+    attachments = attachments.filter(a =>
+      a.work_item !== item.id && !deletedCommentIds.includes(a.comment)
+    );
     return wait(null);
   }
 
@@ -1775,17 +1800,119 @@ const Store = (() => {
     return wait(decorateAttachment(attachment));
   }
 
+  // Resolves the owning project regardless of which parent FK is set on the
+  // attachment — `work_item` directly, or `comment` -> the comment's own
+  // work item — mirroring the real, shared Attachment model's `project`
+  // property. Needed once comment attachments (below) started sharing this
+  // same `attachments` array and this same delete path.
+  function attachmentProjectId(attachment) {
+    if (attachment.work_item != null) {
+      const item = workItems.find(w => w.id === attachment.work_item);
+      return item ? boardProjectId(item.board) : null;
+    }
+    const comment = comments.find(c => c.id === attachment.comment);
+    return comment ? commentProjectId(comment) : null;
+  }
+
   function deleteAttachment(attachmentId) {
     const attachment = attachments.find(a => a.id === Number(attachmentId));
     if (!attachment) return fail(404, 'Not found.');
-    const item = workItems.find(w => w.id === attachment.work_item);
-    const projectId = item ? boardProjectId(item.board) : null;
+    const projectId = attachmentProjectId(attachment);
     try { requireMember(projectId); } catch (err) { return Promise.reject(err); }
     if (!Logic.canDeleteAttachment(attachment.uploaded_by, me.id, myRole(projectId))) {
       return fail(403, "You can only delete your own attachments, unless you're an Owner or Admin of this project.");
     }
     attachments = attachments.filter(a => a.id !== attachment.id);
     return wait(null);
+  }
+
+  /* ---- comments -------------------------------------------------------
+     Backfilling design/'s missing Comments support — production (ui/) has
+     had it, including comment attachments, for a while (see the note above
+     Attachments' seed data). Author-only delete, unlike Attachment's wider
+     uploader-or-manager rule — an authorless comment (its author's account
+     is gone) can be deleted by any member, exactly like the real endpoint
+     and ui/static/js/store.js's identical comment. Unlike ui/'s copy, this
+     doesn't gate on the project being archived — design/'s archiving is
+     deliberately visibility-only (see listMyProjects above), so nothing
+     here should be more restrictive than that. */
+
+  function commentOut(c) {
+    return {
+      id: c.id, work_item: c.work_item,
+      author: c.author === null ? null : userById(c.author),
+      body: c.body, created_at: c.created_at,
+    };
+  }
+
+  function commentProjectId(comment) {
+    const item = workItems.find(w => w.id === comment.work_item);
+    return item ? boardProjectId(item.board) : null;
+  }
+
+  function listComments(itemId) {
+    const item = workItems.find(w => w.id === Number(itemId));
+    if (!item) return fail(404, 'Not found.');
+    try { requireMember(boardProjectId(item.board)); } catch (err) { return Promise.reject(err); }
+    return wait(
+      comments.filter(c => c.work_item === item.id)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .map(commentOut)
+    );
+  }
+
+  function createComment(itemId, body) {
+    const item = workItems.find(w => w.id === Number(itemId));
+    if (!item) return fail(404, 'Not found.');
+    try { requireMember(boardProjectId(item.board)); } catch (err) { return Promise.reject(err); }
+    if (!body || !body.trim()) return fail(400, 'This field may not be blank.');
+    const comment = { id: id(), work_item: item.id, author: me.id, body: body.trim(), created_at: new Date().toISOString() };
+    comments.push(comment);
+    return wait(commentOut(comment));
+  }
+
+  function deleteComment(commentId) {
+    const comment = comments.find(c => c.id === Number(commentId));
+    if (!comment) return fail(404, 'Not found.');
+    try { requireMember(commentProjectId(comment)); } catch (err) { return Promise.reject(err); }
+    if (comment.author !== null && comment.author !== me.id) {
+      return fail(403, 'You can only delete your own comments.');
+    }
+    comments = comments.filter(c => c.id !== comment.id);
+    attachments = attachments.filter(a => a.comment !== comment.id);
+    return wait(null);
+  }
+
+  /* ---- comment attachments ----------------------------------------------
+     Same rules and same shared `attachments` array as work-item attachments
+     above, just scoped to a comment id instead — a comment attachment
+     carries `comment` instead of `work_item`, exactly like the real,
+     shared Attachment model. */
+
+  function listCommentAttachments(commentId) {
+    const comment = comments.find(c => c.id === Number(commentId));
+    if (!comment) return fail(404, 'Not found.');
+    try { requireMember(commentProjectId(comment)); } catch (err) { return Promise.reject(err); }
+    return wait(
+      attachments.filter(a => a.comment === comment.id)
+        .sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at))
+        .map(decorateAttachment)
+    );
+  }
+
+  function uploadCommentAttachment(commentId, { filename, content_type, size }) {
+    const comment = comments.find(c => c.id === Number(commentId));
+    if (!comment) return fail(404, 'Not found.');
+    try { requireMember(commentProjectId(comment)); } catch (err) { return Promise.reject(err); }
+    if (!filename || !size) return fail(400, 'A file is required.');
+    if (size > MAX_ATTACHMENT_SIZE) return fail(400, 'File exceeds the 25 MB limit.');
+    const attachment = {
+      id: id(), comment: comment.id, filename,
+      content_type: content_type || 'application/octet-stream',
+      size, uploaded_by: me.id, uploaded_at: new Date().toISOString(),
+    };
+    attachments.push(attachment);
+    return wait(decorateAttachment(attachment));
   }
 
   /* ---- custom fields & screens (sub-project 2b) --------------------------
@@ -2403,6 +2530,8 @@ const Store = (() => {
     listLabels, renameLabel, recolorLabel, deleteLabel, colorForLabelName, LABEL_PALETTE,
     listLinks, createLink, deleteLink,
     listAttachments, uploadAttachment, deleteAttachment,
+    listComments, createComment, deleteComment,
+    listCommentAttachments, uploadCommentAttachment,
     listUsers,
     listAllUsers, createUserAccount, updateUserAccount,
     archiveProject, unarchiveProject,
